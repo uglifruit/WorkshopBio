@@ -22,13 +22,15 @@ summary: |
   triggers and audio that feel unmistakably alive.
 
   Tap the momentary switch to cycle five ecosystems, each with its own internal
-  logic. HORSES: polyrhythmic clocks with slightly different leg lengths, drifting
-  in and out of phase across four gaits (walk/trot/canter/gallop). GEESE: a
-  cascading probability network where one honk spikes the odds for the rest.
-  FROGS: the Kuramoto model of coupled oscillators, fighting between metronomic
-  sync and chaotic swarms. RAIN: leaky integrate-and-fire buckets that fill with
-  noise and overflow. METEORS: an inhomogeneous Poisson process where a hidden
-  weather system swells activity from eerie silence into dense barrages.
+  logic. HORSES: one stride clock driving four hooves at their real equine
+  footfall offsets - walk, trot, canter and gallop as the actual biomechanical
+  patterns, suspension phases and all. GEESE: a cascading probability network
+  across a flock of twelve, where one honk spikes the odds for the rest. FROGS:
+  the Kuramoto model of coupled oscillators, fighting between metronomic sync and
+  chaotic swarms. RAIN: leaky integrate-and-fire buckets that fill with noise and
+  splash downstream into each other when they overflow. METEORS: an inhomogeneous
+  Poisson process where a hidden weather system swells a swarm of twelve from
+  eerie silence into dense overlapping barrages.
 
   Knob X sets the population (1-4 agents), Knob Main is the physics variable for
   the current ecosystem, and Knob Y adds chaos/humanization. Pulse In 1 is a
@@ -60,8 +62,8 @@ panel:
       name: The Spook (interrupt)
       description: Disrupts the environment. Horses - reset all phases into a unified flam. Geese - spook the flock into a guaranteed cascade. Frogs - splash, scrambling all phases and destroying sync. Rain - wind gust, dumping energy into every bucket. Meteors - bolide, spiking density to maximum.
     - id: PulseIn2
-      name: Secondary clock / sync
-      description: Secondary trigger input, available to the engines as a clock reference.
+      name: The Clock (entrainment)
+      description: An external tempo the ecosystem entrains to rather than obeys. Frogs treat it as a phantom oscillator and couple to it at whatever strength Knob Main sets, from locked-to-clock to indifferent. Horses lock their stride to it. Geese lean honks toward the beat, Rain tops up the buckets, Meteors swell the debris field. Stops mattering ~3 seconds after the clock stops.
   outputs:
     - id: PulseOut1
       name: Agent 1 (Discrete) / All agents (Summed)
@@ -87,13 +89,13 @@ controls:
     - when: { z: any }
       main:
         name: The Physics
-        description: The fundamental law of the current ecosystem. Horses - gait and master speed (walk/trot/canter/gallop). Geese - contagion level. Frogs - decoupling (0 = locked sync, 1 = chaos). Rain - downpour intensity. Meteors - debris density.
+        description: The fundamental law of the current ecosystem. Horses - gait and stride rate (walk/trot/canter/gallop, each with its own tempo band). Geese - contagion level. Frogs - decoupling (0 = locked sync, 1 = chaos). Rain - downpour intensity. Meteors - debris density.
       x:
         name: Population
-        description: How many agents are alive in the ecosystem, 1 to 4.
+        description: How many agents are alive in the ecosystem, 1 to 4. In the flock modes (Geese, Meteors) each output channel carries three swarm members, so a full population is twelve birds or meteors.
       y:
         name: Chaos / Humanize
-        description: Per-mode randomness and spread - timing jitter (Horses), spark rate (Geese), natural-frequency spread (Frogs), threshold variance (Rain), density wander (Meteors).
+        description: Per-mode randomness and spread - per-hoof timing jitter (Horses), spontaneous spark rate (Geese), natural-frequency spread (Frogs), leak rate (Rain), density wander (Meteors).
   switches:
     - id: Z
       up:

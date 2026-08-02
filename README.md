@@ -25,11 +25,27 @@ Tap the momentary switch (Down) to cycle habitats. Each has its own internal log
 
 | Mode | Model | Behaviour |
 |---|---|---|
-| **Horses** | Phase-drifting clocks | Polyrhythmic clocks with slightly different "leg lengths" (1.00 / 0.98 / 1.03 / 0.95×). Rhythms drift in and out of phase forever, shifting from heavy plodding walks to asymmetrical galloping bursts. |
-| **Geese** | Stochastic contagion | A cascading probability network. One voice firing spikes the probability of the others, creating tight, reactive clusters of conversational sound that erupt and fade. |
-| **Frogs** | Coupled oscillators | The Kuramoto model. Independent voices pull on each other's timing, fighting between perfect metronomic synchronisation and chaotic granular swarms. |
-| **Rain** | Leaky integrate-and-fire | Buckets fill with noise and constantly leak. When one overflows it fires. Sounds like a drum circle constantly rushing and dragging. |
-| **Meteors** | Inhomogeneous Poisson | An invisible slow-moving weather system dictates trigger density. Long eerie silences swell smoothly into heavy overlapping barrages. |
+| **Horses** | Real equine gaits | One stride clock drives four hooves at their true footfall offsets. Walk, trot, canter and gallop are the actual biomechanical patterns — including the suspension phase where all four feet leave the ground. |
+| **Geese** | Stochastic contagion | A cascading probability network across a **flock of twelve**. One bird honking raises the odds for all the others, creating tight reactive clusters that erupt and fade. |
+| **Frogs** | Coupled oscillators | The Kuramoto model. Voices pull on each other's timing, fighting between perfect metronomic synchronisation and chaotic swarms — and they'll entrain to an external clock if you give them one. |
+| **Rain** | Leaky integrate-and-fire | Buckets fill with noise and constantly leak. An overflow **splashes downstream** into the next bucket, so drips pull each other along into rushing clusters, then fall apart. |
+| **Meteors** | Inhomogeneous Poisson | An invisible slow-moving weather system dictates the density of a **swarm of twelve**. Long eerie silences swell smoothly into heavy overlapping barrages. |
+
+### The gaits are real
+
+Horses mode isn't four clocks approximating a rhythm — it's one stride clock with
+each hoof landing at its correct point in the stride:
+
+| Gait | Footfall (fraction of stride) | Suspension |
+|---|---|---|
+| **Walk** | LH 0.00 → LF 0.25 → RH 0.50 → RF 0.75 | — (4-beat lateral, same-side legs consecutive) |
+| **Trot** | [LH+RF] 0.00 → [LF+RH] 0.50 | 2-beat diagonal |
+| **Canter** | LH 0.00 → [LF+RH] 0.22 → RF 0.44 | 56% float |
+| **Gallop** | LH 0.00 → RH 0.10 → LF 0.21 → RF 0.31 | 69% float (rotary — both hinds, then both fores) |
+
+Because all four hooves share one stride clock, the gait *holds together* however
+long it runs; Knob Y jitters each hoof's timing without breaking the pattern.
+`python tools/simulate.py gaits` verifies these against the biomechanics.
 
 ## Panel
 
@@ -46,18 +62,28 @@ Tap the momentary switch (Down) to cycle habitats. Each has its own internal log
 
 | Mode | Knob Main |
 |---|---|
-| **Horses** | Gait **and** master speed. `0.00–0.25` Walk `1—2—3—4` · `0.25–0.50` Trot `[1+2]—[3+4]` · `0.50–0.75` Canter `1—[2+3]—4—rest` · `0.75–1.00` Gallop `1-2-3-4——rest` |
-| **Geese** | **Contagion** — 0.0 nodes ignore each other; 1.0 one trigger causes an instant panicked chain reaction |
+| **Horses** | **Gait and stride rate.** `0.00–0.25` Walk · `0.25–0.50` Trot · `0.50–0.75` Canter · `0.75–1.00` Gallop. Each gait sweeps its own stride-rate band, so a gallop is genuinely faster than a walk rather than the same pattern sped up. |
+| **Geese** | **Contagion** — 0.0 birds ignore each other; 1.0 one honk sets off a panicked chain reaction |
 | **Frogs** | **Decoupling** — 0.0 is maximum coupling (locked metronomic sync); 1.0 is zero coupling (total chaos) |
 | **Rain** | **Downpour** — 0.0 leak exceeds input (silence); 1.0 rapid stuttering torrents |
 | **Meteors** | **Debris density** — 0.0 rare isolated hits; 0.5 long silences swelling into dense waves; 1.0 constant barrage |
+
+### Per-mode meaning of Knob Y (Chaos)
+
+| Mode | Knob Y |
+|---|---|
+| **Horses** | Per-hoof timing jitter — an uneven, real animal rather than a machine |
+| **Geese** | Spontaneous spark rate — how readily a bird honks unprompted |
+| **Frogs** | Natural-frequency spread — how hard sync is to reach |
+| **Rain** | **Leak rate** — slow leak lets buckets accumulate into heavy irregular drips; fast leak keeps only the strongest bursts |
+| **Meteors** | Density wander on top of the hidden weather system |
 
 ## Inputs
 
 | Jack | Function |
 |------|----------|
 | **Pulse In 1** | **The Spook** — a hardware interrupt that disrupts the environment. Horses: reset all phases (a massive unified flam). Geese: spook the flock into a guaranteed cascade. Frogs: splash — scramble every phase, destroying sync. Rain: wind gust — dump energy into every bucket. Meteors: bolide — spike density to maximum. |
-| **Pulse In 2** | Secondary clock / sync input |
+| **Pulse In 2** | **The Clock** — an external tempo the ecosystem *entrains to* rather than obeys. Frogs treat it as a phantom frog in the pond and couple to it with whatever strength Knob Main is set to, so you can dial anywhere from locked-to-the-clock to completely indifferent. Horses lock their stride to it. Geese lean their honks toward the beat; Rain tops up every bucket so the nearest tips on the beat; Meteors swell the debris field. Stop the clock and the ecosystem drifts back to its own timing within ~3 seconds. |
 | **CV In 1** | Modulates **Knob Main** (the physics variable) |
 | **CV In 2** | Modulates **Knob X** (population) |
 
@@ -128,13 +154,18 @@ for randomness. There is no `float` in the hot path and no libm; the RP2040 has 
 
 ### Verifying the physics
 
-`tools/simulate.py` models the engine math in Python and reports triggers/second per
-agent across the knob range — used to confirm every mode sweeps a musically useful range
-before flashing hardware:
+`tools/simulate.py` models the engine math in Python and reports gait correctness, the
+Kuramoto sync curve, and triggers/second per agent across the knob range — used to
+confirm every mode sweeps a musically useful range before flashing hardware:
 
 ```sh
-python tools/simulate.py
+python tools/simulate.py          # everything
+python tools/simulate.py gaits    # just the biomechanical gait check
 ```
+
+It has caught real defects that compiled perfectly cleanly: Kuramoto coupling too weak
+to ever synchronise, contagion saturating into a flat buzz, a gallop table byte-identical
+to the walk, and modes topping out at rates that read as hiss rather than rhythm.
 
 (`tools/simulate.cpp` compiles the *real* engine sources natively if you have a host C++
 compiler; the Python model is the fallback.)

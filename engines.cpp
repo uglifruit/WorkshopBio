@@ -15,38 +15,60 @@ namespace bio {
 
 // Leg-length offsets. Deliberately close to 1.0 and mutually irrational-ish so
 // the four clocks take a long time to realign — that slow drift is the sound.
-static const int32_t kHorseRatio[kNumAgents] = {
-	65536,        // 1.00x
-	64225,        // 0.98x
-	67502,        // 1.03x
-	62259         // 0.95x
+// Real gaits are PHASE-LOCKED: a trotting horse's diagonal pair stays a pair,
+// and that lock is what makes it a trot. So ONE master clock per stride drives
+// all four hooves, each landing at a fixed offset within the stride. Leg
+// asymmetry becomes small per-hoof jitter on top — not four free-running clocks,
+// which pulled every gait apart within seconds.
+//
+// Agent order is the standard equine convention:
+//   0 = LH (left hind)    1 = LF (left fore)
+//   2 = RH (right hind)   3 = RF (right fore)
+//
+// Each entry is the fraction of the stride at which that hoof LANDS, Q16
+// (65536 = one full stride). A hoof fires when (stride - offset) wraps, so the
+// numbers below read directly as footfall times — 0 is the start of the stride.
+static const int32_t kGaitOffset[4][kNumAgents] = {
+	//                LH       LF       RH       RF
+	// WALK — 4-beat lateral, evenly spaced. The two legs of ONE SIDE follow each
+	// other: LH, LF, RH, RF. (The original table fired both forelegs back to
+	// back, which no horse does.)
+	//   LH 0 · LF 0.25 · RH 0.50 · RF 0.75
+	{                  0,   16384,   32768,   49152 },
+
+	// TROT — 2-beat diagonal. Diagonal pairs land together, half a stride apart:
+	// LH+RF at 0, LF+RH at 1/2.
+	{                  0,   32768,   32768,       0 },
+
+	// CANTER — 3-beat with suspension, on the right lead: leading hind, then the
+	// diagonal pair, then the leading fore, then all four airborne. The beats
+	// CLUSTER into the first ~45% and leave a real float; even spacing is what
+	// made an earlier version sound like a waltz instead of a canter.
+	//   LH 0 · RH+LF 0.22 · RF 0.44 · float 0.44-1.0
+	{                  0,   14418,   14418,   28836 },
+
+	// GALLOP — 4-beat rotary with a long suspension. The two HINDS drive first,
+	// then the forelegs catch the fall, then all four are airborne. Hinds before
+	// fores is exactly what separates a gallop from a fast walk.
+	//   LH 0 · RH 0.10 · LF 0.21 · RF 0.31 · float 0.31-1.0
+	{                  0,   13763,    6554,   20315 }
 };
 
-// Gait step tables: gait[g][step] = bitmask of agents firing on that step.
-// Bit i = agent i.
-static const uint8_t kGait[4][4] = {
-	// Walk: 1 - 2 - 3 - 4, evenly spaced.
-	{ 0b0001, 0b0010, 0b0100, 0b1000 },
-	// Trot: diagonal pairs together.
-	{ 0b0011, 0b0000, 0b1100, 0b0000 },
-	// Canter: 1 - [2+3] - 4 - rest, asymmetric three-beat.
-	{ 0b0001, 0b0110, 0b1000, 0b0000 },
-	// Gallop: four-hoof burst then suspension.
-	{ 0b0001, 0b0010, 0b0100, 0b1000 }
-};
-
-// Gallop compresses its four hits into the first half of the cycle, leaving a
-// silent "suspension" phase — the step index advances twice as fast and then
-// rests. This table says which steps are live per gait quadrant.
-static const uint8_t kGaitSteps[4] = { 4, 4, 4, 4 };
+// Stride rate range per gait, Q8 Hz. A real horse doesn't just do the same
+// tempo faster — each gait occupies its own band, and a gallop stride is only
+// ~2.5x a walk stride even though it covers far more ground.
+static const int32_t kGaitHzMin[4] = {  115,  205,  300,  380 }; // 0.45..1.5 Hz
+static const int32_t kGaitHzMax[4] = {  205,  330,  420,  640 }; // 0.8 ..2.5 Hz
 
 void HorsesEngine::reset(uint32_t seed)
 {
 	rng_ = seed | 1u;
+	stride_ = 0;
+	lastGait_ = 0xFF;
 	for (int i = 0; i < kNumAgents; i++)
 	{
-		phase_[i] = 0;
 		lastStep_[i] = 0xFF;
+		jitter_[i] = 0;
 	}
 }
 
@@ -54,90 +76,117 @@ void HorsesEngine::tick(const Ctrl &c, EngineOut &out)
 {
 	out.triggers = 0;
 
-	// Pulse In = reset every phase to 0: all legs land together, then drift
-	// apart again. The big unified flam is the point.
-	if (c.spook)
-	{
-		for (int i = 0; i < kNumAgents; i++) { phase_[i] = 0; lastStep_[i] = 0xFF; }
-	}
+	// Pulse In = reset the stride: every hoof snaps back to the top of the gait,
+	// giving a unified landing before the pattern rolls on again.
+	if (c.spook) { stride_ = 0; for (int i = 0; i < kNumAgents; i++) lastStep_[i] = 0xFF; }
 
-	// Knob Main picks the gait (quadrant) and the tempo within it.
+	// Knob Main picks the gait (quadrant) and the stride rate within it.
 	int gait = c.physics >> 14;               // 0..3
 	if (gait > 3) gait = 3;
 
-	// Tempo: roughly 0.6Hz (plod) to 9Hz (gallop) per cycle. Each gait band
-	// sweeps its own range, so the knob accelerates continuously across the
-	// whole sweep rather than jumping at the boundaries.
-	int32_t within = (c.physics & 0x3FFF) << 2;              // 0..65535 in-band
-	int32_t hz_q8  = 150 + ((gait * 480) + mul_q16(within, 480)); // Q8 Hz
-	uint32_t inc   = static_cast<uint32_t>(
-		(static_cast<int64_t>(hz_q8) * 4294967296LL) / (256LL * kCtrlRate));
-
-	// Chaos adds a little per-agent speed wobble so a machine-perfect gait
-	// still breathes.
-	for (int i = 0; i < kNumAgents; i++)
+	// Changing gait re-rolls the jitter so the new gait starts clean.
+	if (gait != lastGait_)
 	{
-		uint32_t agentInc = static_cast<uint32_t>(
-			(static_cast<int64_t>(inc) * kHorseRatio[i]) >> 16);
-
-		if (c.chaos > 0)
-		{
-			// Wobble each leg's speed by up to +/-25% of the base increment,
-			// scaled by chaos. Applied as a proportion of agentInc so the
-			// swing stays musical at every tempo.
-			int32_t wob = rand_bipolar(rng_);                    // +/-16384
-			int32_t amt = mul_q16(wob, c.chaos);                 // +/-16384
-			int32_t delta = static_cast<int32_t>(
-				(static_cast<int64_t>(agentInc) * amt) >> 16);   // +/-25%
-			agentInc = static_cast<uint32_t>(static_cast<int32_t>(agentInc) + delta);
-		}
-
-		phase_[i] += agentInc;
-
-		// Which quarter of the cycle are we in? Crossing into a new step fires
-		// whichever hooves that gait puts on that step.
-		uint8_t step = static_cast<uint8_t>(phase_[i] >> 30);  // 0..3
-		if (step != lastStep_[i])
-		{
-			lastStep_[i] = step;
-			if (kGait[gait][step] & (1 << i)) out.triggers |= (1 << i);
-		}
-
-		// State CV: the raw phase ramp, so patching it out gives a per-leg LFO.
-		out.state[i] = static_cast<int32_t>(phase_[i] >> 16);
+		lastGait_ = static_cast<uint8_t>(gait);
+		for (int i = 0; i < kNumAgents; i++) lastStep_[i] = 0xFF;
 	}
 
-	// Global: agent 0's phase, a master clock reference.
-	out.global = static_cast<int32_t>(phase_[0] >> 16);
-	(void)kGaitSteps;
+	// Each gait has its own stride-rate band; the knob sweeps within it.
+	int32_t within = (c.physics & 0x3FFF) << 2;              // 0..65535 in-band
+	int32_t hz_q8  = kGaitHzMin[gait] +
+		mul_q16(within, kGaitHzMax[gait] - kGaitHzMin[gait]);
+
+	// Pulse In 2 entrains the stride: tapping it locks one stride per pulse, so
+	// the horse falls in step with an external clock.
+	if (c.clock && c.clockPeriod > 0)
+	{
+		int32_t clockHz_q8 = (256 * kCtrlRate) / c.clockPeriod;
+		if (clockHz_q8 > 32) hz_q8 = clockHz_q8;
+		stride_ = 0;
+		for (int i = 0; i < kNumAgents; i++) lastStep_[i] = 0xFF;
+	}
+
+	uint32_t inc = static_cast<uint32_t>(
+		(static_cast<int64_t>(hz_q8) * 4294967296LL) / (256LL * kCtrlRate));
+
+	// ONE stride clock for the whole animal. This is the key change: the gait
+	// stays locked together no matter how long it runs.
+	stride_ += inc;
+
+	for (int i = 0; i < kNumAgents; i++)
+	{
+		// Where this hoof sits within the stride. Subtracting the offset means a
+		// hoof with offset 0.25 wraps a quarter of a stride AFTER the stride
+		// start — so the table reads directly as landing times.
+		uint32_t hoofPhase = stride_ -
+			(static_cast<uint32_t>(kGaitOffset[gait][i]) << 16);
+
+		// Chaos = per-hoof timing jitter, a real horse's unevenness. Applied as
+		// a phase offset rather than a rate change, so legs stay in their gait
+		// relationship instead of drifting out of it.
+		if (c.chaos > 0)
+		{
+			jitter_[i] = slew(jitter_[i], mul_q16(rand_bipolar(rng_), c.chaos), 5);
+			hoofPhase += static_cast<uint32_t>(jitter_[i] << 10);
+		}
+
+		// A hoof lands when its phase wraps past the top of the stride. Track it
+		// in 16ths so the fine-grained canter/gallop offsets resolve cleanly.
+		uint8_t step = static_cast<uint8_t>(hoofPhase >> 28);   // 0..15
+		if (step == 0 && lastStep_[i] != 0) out.triggers |= (1 << i);
+		lastStep_[i] = step;
+
+		// State CV: this hoof's position in the stride — a per-leg LFO whose
+		// phase relationship to the others IS the gait.
+		out.state[i] = static_cast<int32_t>(hoofPhase >> 16);
+	}
+
+	// Global: the stride clock itself, one cycle per full gait pattern.
+	out.global = static_cast<int32_t>(stride_ >> 16);
 }
 
 // ===========================================================================
 // Mode 2 — Geese: stochastic contagion
 // ===========================================================================
 
-// Refractory period after a honk: no re-fire for ~60ms. Without this the
-// mutual excitation would latch into a continuous tone instead of a cascade.
-static constexpr uint16_t kGooseRefractory = kCtrlRate / 16; // ~94 ticks
+// Refractory period after a honk: no re-fire for ~170ms. Without this the mutual
+// excitation would latch into a continuous tone instead of a cascade. It also
+// sets the hard ceiling on how fast one bird can honk — and since three birds
+// share each output channel, that ceiling matters three times over.
+static constexpr uint16_t kGooseRefractory = kCtrlRate / 6;  // ~250 ticks
 
 void GeeseEngine::reset(uint32_t seed)
 {
 	rng_ = seed | 1u;
-	for (int i = 0; i < kNumAgents; i++) { excite_[i] = 0; refractory_[i] = 0; }
+	for (int i = 0; i < kSwarmSize; i++) { excite_[i] = 0; refractory_[i] = 0; }
 }
 
 void GeeseEngine::tick(const Ctrl &c, EngineOut &out)
 {
 	out.triggers = 0;
 
-	// Pulse In = spook the flock: a huge excitation spike into every node at
+	// The flock is kSwarmSize birds folded onto kNumAgents outputs: with the
+	// population knob at 4, all 12 are awake and each output channel carries 3
+	// of them. Four birds never sounded like a flock; twelve do.
+	int flock = c.population * kSwarmPerAgent;
+
+	// Pulse In = spook the flock: a huge excitation spike into every bird at
 	// once, guaranteeing a cascade.
 	if (c.spook)
-		for (int i = 0; i < kNumAgents; i++) excite_[i] = kQ16One;
+		for (int i = 0; i < flock; i++) excite_[i] = kQ16One;
+
+	// Pulse In 2 = the clock nudges the whole flock, so honks lean toward the
+	// beat without being locked to it.
+	if (c.clock)
+		for (int i = 0; i < flock; i++)
+		{
+			excite_[i] += kQ16One / 3;
+			if (excite_[i] > kQ16One) excite_[i] = kQ16One;
+		}
 
 	// Baseline spontaneous spark chance per tick, scaled up as the flock shrinks.
-	// A cascade needs someone to honk first; with four birds a spark somewhere
-	// is quick, but with one or two the wait for ignition would stretch to tens
+	// A cascade needs someone to honk first; with a full flock a spark somewhere
+	// is quick, but with three birds the wait for ignition would stretch to tens
 	// of seconds and the mode would read as broken. Chaos raises it further.
 	int32_t spark = (2 + (c.chaos >> 12)) * (kNumAgents + 1 - c.population);
 
@@ -146,11 +195,14 @@ void GeeseEngine::tick(const Ctrl &c, EngineOut &out)
 	// dead across the middle of its travel.
 	int32_t contagion = (c.physics + mul_q16(c.physics, c.physics)) >> 1;
 
-	uint8_t fired = 0;
-	for (int i = 0; i < kNumAgents; i++)
-	{
-		if (i >= c.population) { out.state[i] = 0; continue; }
+	// How much one honk raises every other bird's excitement. Small, because in
+	// a flock of twelve each honk lands on eleven neighbours — the cascade comes
+	// from many birds accumulating, not from any single honk being decisive.
+	constexpr int32_t nudge = kQ16One / 16;
 
+	uint32_t fired = 0;
+	for (int i = 0; i < flock; i++)
+	{
 		if (refractory_[i] > 0)
 		{
 			refractory_[i]--;
@@ -158,48 +210,66 @@ void GeeseEngine::tick(const Ctrl &c, EngineOut &out)
 		else
 		{
 			// Probability = baseline spark + whatever excitation the flock has
-			// pushed into this node. The >>2 keeps a fully-excited node at a
-			// ~25% per-tick chance rather than a certainty, so a cascade stays
-			// a flurry of distinct honks instead of a solid buzz.
-			int32_t p = spark + (mul_q16(excite_[i], contagion) >> 2);
+			// pushed into this bird. The >>6 is what keeps the contagion knob
+			// GRADUAL: at a smaller shift, any working contagion drove every
+			// bird straight to its refractory ceiling and the knob became a
+			// switch between silence and a solid 16Hz buzz.
+			int32_t p = spark + (mul_q16(excite_[i], contagion) >> 6);
 			if (rand_q16(rng_) < p)
 			{
-				fired |= (1 << i);
+				fired |= (1u << i);
 				refractory_[i] = kGooseRefractory;
 			}
 		}
-
-		out.state[i] = excite_[i];
 	}
 
-	// A node that fired excites all the *others* — never itself, or it would
+	// A bird that honked excites all the *others* — never itself, or it would
 	// just retrigger the moment its refractory period ended.
 	if (fired)
 	{
-		for (int i = 0; i < kNumAgents; i++)
+		for (int i = 0; i < flock; i++)
 		{
-			if (!(fired & (1 << i))) continue;
-			for (int j = 0; j < kNumAgents; j++)
+			if (!(fired & (1u << i))) continue;
+			for (int j = 0; j < flock; j++)
 			{
 				if (j == i) continue;
 				// A partial nudge, not a slam to full scale: excitement has to
 				// ACCUMULATE across several honks to tip the flock over. That
 				// build-up is what makes the cascade audible as a cascade.
-				excite_[j] += kQ16One / 3;
+				excite_[j] += nudge;
 				if (excite_[j] > kQ16One) excite_[j] = kQ16One;
 			}
 		}
 	}
-	out.triggers = fired;
 
-	// Excitation decays fast — a honk's influence lasts a couple hundred ms.
-	int32_t sum = 0;
-	for (int i = 0; i < kNumAgents; i++)
+	// Fold the flock down onto the output channels: a channel fires if any of
+	// its birds did, and carries the mean excitation of its group as state CV.
+	out.triggers = 0;
+	for (int a = 0; a < kNumAgents; a++)
 	{
-		excite_[i] = fast_exp_decay(excite_[i], 6);
+		if (a >= c.population) { out.state[a] = 0; continue; }
+		int32_t groupExcite = 0;
+		for (int k = 0; k < kSwarmPerAgent; k++)
+		{
+			int i = a * kSwarmPerAgent + k;
+			if (fired & (1u << i)) out.triggers |= (1 << a);
+			groupExcite += excite_[i];
+		}
+		out.state[a] = groupExcite / kSwarmPerAgent;
+	}
+
+	// Excitation decays over roughly a second — slow enough that honks from
+	// several birds ACCUMULATE into a cascade, fast enough that the flock
+	// settles back to quiet between outbursts. (At the old faster decay the
+	// excitation drained before it could ever build, so the contagion knob had
+	// almost no effect across its range.)
+	int32_t sum = 0;
+	for (int i = 0; i < flock; i++)
+	{
+		excite_[i] = fast_exp_decay(excite_[i], 9);
 		sum += excite_[i];
 	}
-	out.global = sum >> 2;   // mean flock agitation
+	out.global = (flock > 0) ? (sum / flock) : 0;   // mean flock agitation
 }
 
 // ===========================================================================
@@ -213,6 +283,7 @@ void GeeseEngine::tick(const Ctrl &c, EngineOut &out)
 void FrogsEngine::reset(uint32_t seed)
 {
 	rng_ = seed | 1u;
+	clockPhase_ = 0;
 	for (int i = 0; i < kNumAgents; i++)
 	{
 		phase_[i] = xorshift32(rng_);
@@ -229,11 +300,23 @@ void FrogsEngine::tick(const Ctrl &c, EngineOut &out)
 	if (c.spook)
 		for (int i = 0; i < kNumAgents; i++) phase_[i] = xorshift32(rng_);
 
-	// Base chorus rate ~1.2Hz to ~6Hz on Knob Main's lower influence; the knob
-	// here is coupling, so tempo comes from a fixed base plus chaos spread.
+	// Base chorus rate. The knob here is coupling, so tempo comes from a fixed
+	// base plus the chaos spread.
 	constexpr int32_t kBaseHz_q8 = 400;   // ~1.56 Hz
+	int32_t baseHz_q8 = kBaseHz_q8;
+
+	// Pulse In 2 entrains the chorus to an external clock. This is the most
+	// musically useful thing on the card: the frogs pull toward YOUR tempo with
+	// exactly the coupling strength Knob Main is set to, so you can dial
+	// anywhere from locked-to-the-clock to completely indifferent to it.
+	if (c.clockPeriod > 0)
+	{
+		int32_t clockHz_q8 = (256 * kCtrlRate) / c.clockPeriod;
+		if (clockHz_q8 > 32 && clockHz_q8 < 8192) baseHz_q8 = clockHz_q8;
+	}
+
 	int32_t baseInc = static_cast<int32_t>(
-		(static_cast<int64_t>(kBaseHz_q8) * 4294967296LL) / (256LL * kCtrlRate));
+		(static_cast<int64_t>(baseHz_q8) * 4294967296LL) / (256LL * kCtrlRate));
 
 	// Knob Main INVERSELY controls coupling: 0.0 = maximum K (locked sync),
 	// 1.0 = K of zero (every frog for itself).
@@ -256,6 +339,19 @@ void FrogsEngine::tick(const Ctrl &c, EngineOut &out)
 	int n = c.population;
 	if (n < 1) n = 1;
 
+	// The external clock joins the pond as a phantom frog that never listens to
+	// anyone. Matching its RATE alone would leave the chorus running at the right
+	// tempo but landing anywhere in the bar; coupling to its PHASE is what makes
+	// the frogs actually arrive on the beat. Its pull is the same K as everyone
+	// else's, so Knob Main dials the whole range from locked-to-clock to
+	// completely indifferent.
+	bool haveClock = (c.clockPeriod > 0);
+	if (haveClock)
+	{
+		clockPhase_ += static_cast<uint32_t>(baseInc);
+		if (c.clock) clockPhase_ = 0;   // a pulse re-anchors the downbeat
+	}
+
 	for (int i = 0; i < kNumAgents; i++)
 	{
 		if (i >= n) { out.state[i] = 0; continue; }
@@ -265,12 +361,19 @@ void FrogsEngine::tick(const Ctrl &c, EngineOut &out)
 		// speeds up and a leading one slows down — that is the whole model.
 		// Mean of the neighbours, kept in Q15 (+/-32767).
 		int32_t coupling = 0;
+		int     partners = 0;
 		for (int j = 0; j < n; j++)
 		{
 			if (j == i) continue;
 			coupling += fast_sin(phase_[j] - phase_[i]);
+			partners++;
 		}
-		if (n > 1) coupling /= (n - 1);
+		if (haveClock)
+		{
+			coupling += fast_sin(clockPhase_ - phase_[i]);
+			partners++;
+		}
+		if (partners > 1) coupling /= partners;
 
 		// Modulate this frog's RATE by up to +/-100% at full K. That much
 		// authority is what actually drags the chorus into lock; the old
@@ -304,8 +407,20 @@ void FrogsEngine::tick(const Ctrl &c, EngineOut &out)
 static const int32_t kRainThreshold[kNumAgents] = {
 	kQ16One, (kQ16One * 115) / 100, (kQ16One * 88) / 100, (kQ16One * 103) / 100
 };
-// ...and staggered leak shifts (larger = leakier bucket drains slower).
-static const uint8_t kRainLeak[kNumAgents] = { 9, 8, 10, 9 };
+// ...and staggered leak offsets, added to the Knob Y leak rate (higher shift =
+// slower drain, so a bucket that leaks less fills sooner).
+static const int8_t kRainLeakBias[kNumAgents] = { 0, -1, 1, 0 };
+
+// When a bucket overflows it SPLASHES into its neighbours. This is what makes
+// Rain more than a Poisson process with extra steps: one drip loads the buckets
+// either side, so overflows pull each other along into the rushing-and-dragging
+// clusters you hear off a real gutter, then fall apart again.
+//
+// The splash runs DOWNSTREAM only (i -> i+1), like water finding its way down a
+// leaf. A symmetric splash locked all four buckets into firing together within
+// seconds, which flattened the mode into a single voice; a one-way cascade
+// keeps them staggered while still passing energy along.
+static constexpr int32_t kRainSplash = kQ16One / 12;
 
 void RainEngine::reset(uint32_t seed)
 {
@@ -323,44 +438,67 @@ void RainEngine::tick(const Ctrl &c, EngineOut &out)
 		for (int i = 0; i < kNumAgents; i++)
 			level_[i] += (kQ16One >> 1) + (rand_q16(rng_) >> 1);
 
-	// Downpour: how hard it's raining into the buckets. The leak has to be
-	// overcome before anything fires at all, so the knob is offset to put the
-	// silence-to-drizzle threshold near the bottom of its travel rather than
-	// halfway up. Mildly shaped to keep resolution in the sparse region, which
-	// is where the mode is most interesting.
-	// A modest offset lifts the bottom of the knob just over the leak, then the
-	// response stays linear-ish to the top so the last quarter of travel still
-	// adds intensity instead of flattening out.
+	// Downpour: how hard it's raining into the buckets. A modest offset lifts the
+	// bottom of the knob just over the leak, then the response stays linear-ish
+	// to the top so the last quarter of travel still adds intensity instead of
+	// flattening out.
 	int32_t x = c.physics;
 	int32_t downpour = (x >> 2) + ((x + mul_q16(x, x)) >> 2);
 	if (downpour > kQ16One) downpour = kQ16One;
 
+	// Pulse In 2 entrains the rain: each clock pulse tops every bucket up a
+	// little, so buckets nearest their threshold tip on the beat while the rest
+	// keep running free. The rhythm leans on the clock without being quantised
+	// to it — the "dragging" stays.
+	if (c.clock)
+		for (int i = 0; i < kNumAgents; i++)
+			level_[i] += kQ16One / 6;
+
+	// Knob Y sets the LEAK rate rather than noise variance. That is the control
+	// that actually shapes this model: a slow leak lets buckets accumulate into
+	// heavy irregular drips, a fast leak keeps only the strongest bursts alive.
+	// (Chaos 0 = shift 10, slow drain; chaos 1 = shift 7, fast drain.)
+	int32_t leakBase = 10 - (c.chaos * 3 / kQ16One);
+
+	int32_t splash[kNumAgents] = { 0, 0, 0, 0 };
 	int32_t sum = 0;
+
 	for (int i = 0; i < kNumAgents; i++)
 	{
 		if (i >= c.population) { out.state[i] = 0; continue; }
 
-		// Noisy inflow. The chaos knob widens the variance of each drop.
-		// The >>5 sets the ceiling: full downpour lands around 25 drips/sec per
-		// bucket, a dense torrent that is still a rhythm rather than a buzz.
+		// Noisy inflow. The >>5 sets the ceiling: full downpour lands around 25
+		// drips/sec per bucket, a dense torrent that is still a rhythm.
 		int32_t drop = mul_q16(rand_q16(rng_), downpour) >> 5;
-		if (c.chaos > 0)
-			drop += mul_q16(rand_q16(rng_) - (kQ16One / 2), c.chaos) >> 4;
 		if (drop < 0) drop = 0;
 
 		level_[i] += drop;
-		level_[i] = fast_exp_decay(level_[i], kRainLeak[i]);   // constant leak
+
+		int32_t shift = leakBase + kRainLeakBias[i];
+		if (shift < 5)  shift = 5;
+		if (shift > 12) shift = 12;
+		level_[i] = fast_exp_decay(level_[i], static_cast<uint8_t>(shift));
 
 		if (level_[i] >= kRainThreshold[i])
 		{
 			out.triggers |= (1 << i);
 			level_[i] = 0;
+
+			// Splash downstream into the next bucket, collected and applied after
+			// the loop so every bucket sees the same instant rather than the
+			// low-numbered ones getting a head start. The last bucket spills
+			// back to the first, so the cascade wraps around the leaf.
+			int next = (i + 1 < c.population) ? (i + 1) : 0;
+			if (next != i) splash[next] += kRainSplash;
 		}
 
 		// State CV = the bucket filling and emptying: a natural ramp LFO.
 		out.state[i] = (level_[i] > kQ16One) ? kQ16One : level_[i];
 		sum += out.state[i];
 	}
+
+	for (int i = 0; i < c.population; i++) level_[i] += splash[i];
+
 	out.global = sum >> 2;
 }
 
@@ -395,6 +533,14 @@ void MeteorsEngine::tick(const Ctrl &c, EngineOut &out)
 	// It then slews back down to the underlying walk on its own.
 	if (c.spook) density_ = kQ16One;
 
+	// Pulse In 2 = a smaller swell on each clock pulse, so the debris field
+	// breathes with an external tempo instead of wandering entirely free.
+	if (c.clock)
+	{
+		density_ += kQ16One / 4;
+		if (density_ > kQ16One) density_ = kQ16One;
+	}
+
 	// Knob Main sets both the floor and how much the walk is allowed to swing.
 	// Low: rare isolated hits. Mid: long silences swelling into dense waves.
 	// High: locked-high barrage.
@@ -419,14 +565,21 @@ void MeteorsEngine::tick(const Ctrl &c, EngineOut &out)
 	// a natural swell, then shifted so even a locked-high field tops out around
 	// 12 strikes/sec per voice — a heavy barrage that still reads as discrete
 	// meteors rather than a continuous hiss.
-	int32_t p = mul_q16(effective, effective) >> 7;
-	if (c.chaos > 0) p += mul_q16(rand_q16(rng_), c.chaos) >> 10;
+	// The extra >>1 accounts for the swarm: kSwarmPerAgent members now roll
+	// against this probability for every output channel, so without it the
+	// perceived rate would triple against the tuning done at 4 agents.
+	int32_t p = mul_q16(effective, effective) >> 8;
+	if (c.chaos > 0) p += mul_q16(rand_q16(rng_), c.chaos) >> 11;
 
-	for (int i = 0; i < kNumAgents; i++)
+	// Like Geese, Meteors runs a swarm folded onto the four outputs. Individual
+	// meteors are independent, so a channel strikes if any of its members does —
+	// which is what gives a dense field its overlapping, uncountable texture.
+	for (int a = 0; a < kNumAgents; a++)
 	{
-		if (i >= c.population) { out.state[i] = 0; continue; }
-		if (rand_q16(rng_) < p) out.triggers |= (1 << i);
-		out.state[i] = effective;
+		if (a >= c.population) { out.state[a] = 0; continue; }
+		for (int k = 0; k < kSwarmPerAgent; k++)
+			if (rand_q16(rng_) < p) { out.triggers |= (1 << a); break; }
+		out.state[a] = effective;
 	}
 	out.global = effective;
 }

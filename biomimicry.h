@@ -10,8 +10,17 @@
 
 namespace bio {
 
-/// Number of independent agents (voices/nodes/buckets) in every engine.
+/// Number of agents exposed to the outside world: four trigger outputs, four
+/// voices, four state CVs.
 constexpr int kNumAgents = 4;
+
+/// The flock modes (Geese, Meteors) run more birds internally than they have
+/// outputs. Four agents cannot sound like a flock; twelve can. Each internal
+/// member is only a probability roll, so the cost is trivial, and members fold
+/// down onto the four output channels — a channel fires if ANY of its members
+/// fires. Density and overlap read as a swarm rather than as four things.
+constexpr int kSwarmSize = 12;
+constexpr int kSwarmPerAgent = kSwarmSize / kNumAgents;   // 3
 
 /// ProcessSample() runs at 48kHz; the physics run every kCtrlDiv samples.
 /// 48000/32 = 1500Hz control rate — 0.67ms timing granularity, far finer than
@@ -44,11 +53,14 @@ enum class Routing : uint8_t
 /// All the Q16 fields are 0..65536.
 struct Ctrl
 {
-	int32_t physics;    // Knob Main (+ CV In 1): the per-mode physics variable
-	int32_t chaos;      // Knob Y: global randomness / spread
-	int     population; // Knob X (+ CV In 2): 1..kNumAgents active agents
-	bool    spook;      // Pulse In 1 rising edge this tick
-	bool    clock;      // Pulse In 2 rising edge this tick
+	int32_t physics;     // Knob Main (+ CV In 1): the per-mode physics variable
+	int32_t chaos;       // Knob Y: global randomness / spread
+	int     population;  // Knob X (+ CV In 2): 1..kNumAgents active agents
+	bool    spook;       // Pulse In 1 rising edge this tick
+	bool    clock;       // Pulse In 2 rising edge this tick
+	int32_t clockPeriod; // control ticks between the last two Pulse In 2 edges,
+	                     // 0 if no clock is running. Lets an engine entrain to
+	                     // an external tempo rather than just being nudged.
 };
 
 /// What an engine produces each control tick.

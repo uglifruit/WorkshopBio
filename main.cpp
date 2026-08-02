@@ -105,17 +105,31 @@ private:
 		if (Connected(Input::CV2)) popRaw += CVIn2() << 4;
 		popRaw = clampQ16(popRaw);
 
+		// Clock tracking for Pulse In 2. The period between edges lets the
+		// engines entrain to an external tempo rather than merely be nudged by
+		// it. It ages out after ~3s of silence so a stopped clock releases the
+		// ecosystem back to its own timing instead of freezing it.
+		if (clockAge_ < 3 * kCtrlRate) clockAge_++;
+		else clockPeriod_ = 0;
+
+		if (clockPending_)
+		{
+			if (clockAge_ >= 2 && clockAge_ < 3 * kCtrlRate) clockPeriod_ = clockAge_;
+			clockAge_ = 0;
+		}
+
 		Ctrl c;
-		c.physics    = physics;
-		c.chaos      = knob_to_q16(KnobVal(Knob::Y));
-		c.population = 1 + (popRaw * kNumAgents - 1) / kQ16One;
+		c.physics     = physics;
+		c.chaos       = knob_to_q16(KnobVal(Knob::Y));
+		c.population  = 1 + (popRaw * kNumAgents - 1) / kQ16One;
 		if (c.population < 1) c.population = 1;
 		if (c.population > kNumAgents) c.population = kNumAgents;
-		c.spook      = spookPending_;
-		c.clock      = clockPending_;
+		c.spook       = spookPending_;
+		c.clock       = clockPending_;
+		c.clockPeriod = clockPeriod_;
 		spookPending_ = false;
 		clockPending_ = false;
-		population_  = c.population;
+		population_   = c.population;
 
 		// --- Physics. ---
 		EngineOut out;
@@ -228,6 +242,8 @@ private:
 	bool     switchArmed_ = false;
 	bool     spookPending_ = false;
 	bool     clockPending_ = false;
+	int32_t  clockPeriod_  = 0;   // control ticks between Pulse In 2 edges
+	int32_t  clockAge_     = 0;   // ticks since the last edge
 	int32_t  activity_   = 0;
 	uint32_t seed_       = 0xC0FFEEu;
 

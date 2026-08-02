@@ -8,18 +8,20 @@
 
 namespace bio {
 
-/// Mode 1 — polyrhythmic clocks with per-leg speed offsets and gait patterns.
-/// Four phase accumulators run at fixed ratios (1.00/0.98/1.03/0.95) so they
-/// drift in and out of alignment forever. Knob Main sets tempo and picks one of
-/// four gait step-tables (walk/trot/canter/gallop).
+/// Mode 1 — one stride clock driving four hooves at real equine phase offsets.
+/// Knob Main picks the gait (walk / trot / canter / gallop) and the stride rate
+/// within that gait's own band. Chaos jitters each hoof's timing without
+/// breaking the gait's phase relationships.
 class HorsesEngine : public Engine
 {
 public:
 	void reset(uint32_t seed) override;
 	void tick(const Ctrl &c, EngineOut &out) override;
 private:
-	uint32_t phase_[kNumAgents];
+	uint32_t stride_;                 // the single master stride clock
+	int32_t  jitter_[kNumAgents];     // per-hoof timing offset, Q16
 	uint8_t  lastStep_[kNumAgents];
+	uint8_t  lastGait_;
 	uint32_t rng_;
 };
 
@@ -32,8 +34,10 @@ public:
 	void reset(uint32_t seed) override;
 	void tick(const Ctrl &c, EngineOut &out) override;
 private:
-	int32_t  excite_[kNumAgents];   // Q16 incoming excitation
-	uint16_t refractory_[kNumAgents]; // control ticks remaining
+	// Runs kSwarmSize birds folded onto kNumAgents outputs — four geese never
+	// sounded like a flock.
+	int32_t  excite_[kSwarmSize];     // Q16 incoming excitation
+	uint16_t refractory_[kSwarmSize]; // control ticks remaining
 	uint32_t rng_;
 };
 
@@ -48,6 +52,7 @@ public:
 private:
 	uint32_t phase_[kNumAgents];
 	int32_t  natural_[kNumAgents];  // per-agent natural frequency increment
+	uint32_t clockPhase_;           // phantom oscillator tracking Pulse In 2
 	uint32_t rng_;
 };
 
