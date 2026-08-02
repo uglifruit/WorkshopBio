@@ -83,4 +83,21 @@ private:
 	uint32_t rng_;
 };
 
+/// Mode 6 — density-dependent chorus. Where Geese couple on excitation and Frogs
+/// couple on phase, cicadas couple on AMPLITUDE: how loud the field already is
+/// drives how fast each insect calls, and that feedback loop is what produces
+/// the slow pulsing waves of loudness a real cicada field makes. Positive
+/// feedback swells the chorus, fatigue drags it back down, and it breathes.
+class CicadasEngine : public Engine
+{
+public:
+	void reset(uint32_t seed) override;
+	void tick(const Ctrl &c, EngineOut &out) override;
+private:
+	uint32_t phase_[kSwarmSize];    // each insect's call cycle
+	int32_t  fatigue_[kSwarmSize];  // Q16, rises with calling, forces a rest
+	int32_t  field_;                // Q16, the perceived loudness of the chorus
+	uint32_t rng_;
+};
+
 } // namespace bio

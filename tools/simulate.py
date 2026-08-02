@@ -379,8 +379,90 @@ def meteors(physics, chaos, pop, ticks, spook_every=0, clock_period=0):
     return fires
 
 
+# ===========================================================================
+# Mode 6: Cicadas - density-dependent chorus (amplitude coupling)
+# ===========================================================================
+def cicadas(physics, chaos, pop, ticks, spook_every=0, clock_period=0):
+    rng = 0x1234 | 1
+    phase = []
+    for _ in range(SWARM_SIZE):
+        rng = xorshift(rng)
+        phase.append(rng)
+    fat = [0] * SWARM_SIZE
+    field = 0
+    fires = [0] * 4
+    swarm = pop * SWARM_PER_AGENT
+    for t in range(ticks):
+        if spook_every and t % spook_every == 0 and t:
+            for i in range(swarm):
+                fat[i] = Q
+        if clock_period and t % clock_period == 0 and t:
+            field = min(field + Q // 4, Q)
+        rate = Q + mul_q16(mul_q16(field, physics), Q) * 6
+        hz = mul_q16(600 << 4, rate) >> 4
+        called = 0
+        fired = 0
+        for i in range(swarm):
+            tired = Q - (fat[i] * 3 // 4)
+            my = mul_q16(hz, tired)
+            if chaos:
+                rng, rb = rand_bipolar(rng)
+                my += (my >> 3) * mul_q16(rb << 1, chaos) >> 15
+            my = max(my, 16)
+            inc = (my * (1 << 32)) // (256 * CTRL)
+            b = phase[i]
+            phase[i] = (phase[i] + inc) & MASK32
+            if phase[i] < b:
+                called += 1
+                fired |= 1 << i
+                fat[i] = min(fat[i] + mul_q16(Q // 3, physics), Q)
+            fat[i] = min(fat[i] + mul_q16(mul_q16(field, physics), Q // 150), Q)
+            fat[i] = decay(fat[i], 12)
+        inst = min(called * Q * 8 // swarm, Q) if swarm else 0
+        field = slew(field, inst, 4) if inst > field else slew(field, inst, 8)
+        for a in range(pop):
+            for k in range(SWARM_PER_AGENT):
+                if fired & (1 << (a * SWARM_PER_AGENT + k)):
+                    fires[a] += 1
+                    break
+    return fires
+
+
+def cicadas_swing(physics, secs=30):
+    """How deeply the field swells and subsides - the point of the mode."""
+    rng = 0x1234 | 1
+    phase = []
+    for _ in range(SWARM_SIZE):
+        rng = xorshift(rng)
+        phase.append(rng)
+    fat = [0] * SWARM_SIZE
+    field = 0
+    hist = []
+    swarm = SWARM_SIZE
+    for t in range(secs * CTRL):
+        rate = Q + mul_q16(mul_q16(field, physics), Q) * 6
+        hz = mul_q16(600 << 4, rate) >> 4
+        called = 0
+        for i in range(swarm):
+            tired = Q - (fat[i] * 3 // 4)
+            my = max(mul_q16(hz, tired), 16)
+            inc = (my * (1 << 32)) // (256 * CTRL)
+            b = phase[i]
+            phase[i] = (phase[i] + inc) & MASK32
+            if phase[i] < b:
+                called += 1
+                fat[i] = min(fat[i] + mul_q16(Q // 3, physics), Q)
+            fat[i] = min(fat[i] + mul_q16(mul_q16(field, physics), Q // 150), Q)
+            fat[i] = decay(fat[i], 12)
+        inst = min(called * Q * 8 // swarm, Q)
+        field = slew(field, inst, 4) if inst > field else slew(field, inst, 8)
+        hist.append(field)
+    seg = hist[CTRL * 5:]
+    return min(seg) / Q, max(seg) / Q
+
+
 ENGINES = [("Horses", horses), ("Geese", geese), ("Frogs", frogs),
-           ("Rain", rain), ("Meteors", meteors)]
+           ("Rain", rain), ("Meteors", meteors), ("Cicadas", cicadas)]
 
 
 def rates():
@@ -422,6 +504,11 @@ def main():
     for f in [0.0, 0.25, 0.5, 0.75, 1.0]:
         R = frogs_order(min(int(f * Q), Q - 1))
         print(f"  physics {f:.2f}  R={R:.3f}  {'#' * int(R * 40)}")
+    print("\nCicadas field swell (coupling depth)")
+    for f in [0.0, 0.25, 0.5, 0.75, 1.0]:
+        lo, hi = cicadas_swing(min(int(f * Q), Q - 1))
+        print(f"  physics {f:.2f}  field {lo:.2f}..{hi:.2f}  "
+              f"swing {hi-lo:.2f}  {'#' * int((hi-lo) * 50)}")
     rates()
 
 

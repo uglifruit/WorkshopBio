@@ -106,6 +106,19 @@ def meteors(dur=0.55):
     return out
 
 
+def cicadas(dur=0.16):
+    """Stridulation: a high tone ring-modulated by a fast wing-beat buzz."""
+    n = int(SR * dur)
+    out = []
+    for i in range(n):
+        e = env(i, n, 5)
+        tone = math.sin(2 * math.pi * 3800 * i / SR)
+        buzz = 0.5 + 0.5 * math.sin(2 * math.pi * 190 * i / SR)
+        hiss = random.uniform(-1, 1) * 0.12
+        out.append((tone * buzz + hiss) * e * 0.7)
+    return out
+
+
 def main():
     random.seed(1)
     os.makedirs(OUT, exist_ok=True)
@@ -115,6 +128,7 @@ def main():
     write_raw("frogs", frogs())
     write_raw("rain", rain())
     write_raw("meteors", meteors())
+    write_raw("cicadas", cicadas())
     print("\nThese are procedural placeholders. Swap in real recordings and "
           "rebuild.")
 

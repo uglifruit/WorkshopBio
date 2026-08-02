@@ -30,7 +30,7 @@ constexpr int   kCtrlDiv  = 32;
 constexpr int   kSampleRate = 48000;
 constexpr int   kCtrlRate = kSampleRate / kCtrlDiv; // 1500 Hz
 
-/// The five ecosystems, in cycling order.
+/// The six ecosystems, in cycling order.
 enum class Mode : uint8_t
 {
 	Horses = 0,
@@ -38,6 +38,7 @@ enum class Mode : uint8_t
 	Frogs,
 	Rain,
 	Meteors,
+	Cicadas,
 	Count
 };
 constexpr int kNumModes = static_cast<int>(Mode::Count);

@@ -3,7 +3,7 @@
 **A generative stochastic rhythm card born under the dark skies of rural Wales.**
 
 Modular synthesis often traps us in rigid, Euclidean grids. BioMimicry breaks that grid
-by using **five distinct mathematical physics engines** to generate triggers, CV and audio
+by using **six distinct mathematical physics engines** to generate triggers, CV and audio
 that feel unmistakably alive.
 
 It was built to capture the semi-random behaviours of the natural world: the polyrhythmic
@@ -30,6 +30,7 @@ Tap the momentary switch (Down) to cycle habitats. Each has its own internal log
 | **Frogs** | Coupled oscillators | The Kuramoto model. Voices pull on each other's timing, fighting between perfect metronomic synchronisation and chaotic swarms — and they'll entrain to an external clock if you give them one. |
 | **Rain** | Leaky integrate-and-fire | Buckets fill with noise and constantly leak. An overflow **splashes downstream** into the next bucket, so drips pull each other along into rushing clusters, then fall apart. |
 | **Meteors** | Inhomogeneous Poisson | An invisible slow-moving weather system dictates the density of a **swarm of twelve**. Long eerie silences swell smoothly into heavy overlapping barrages. |
+| **Cicadas** | Amplitude feedback | A field of twelve insects that call faster the louder the field already is — and tire from being in it. That loop produces the slow pulsing waves of loudness a real cicada field makes. Where Frogs couple on *phase* and Geese on *events*, Cicadas couple on *loudness*. |
 
 ### The gaits are real
 
@@ -67,6 +68,7 @@ long it runs; Knob Y jitters each hoof's timing without breaking the pattern.
 | **Frogs** | **Decoupling** — 0.0 is maximum coupling (locked metronomic sync); 1.0 is zero coupling (total chaos) |
 | **Rain** | **Downpour** — 0.0 leak exceeds input (silence); 1.0 rapid stuttering torrents |
 | **Meteors** | **Debris density** — 0.0 rare isolated hits; 0.5 long silences swelling into dense waves; 1.0 constant barrage |
+| **Cicadas** | **Coupling depth** — 0.0 independent insects, a steady even drone; 1.0 the field drives itself into surges that collapse into silence |
 
 ### Per-mode meaning of Knob Y (Chaos)
 
@@ -77,12 +79,13 @@ long it runs; Knob Y jitters each hoof's timing without breaking the pattern.
 | **Frogs** | Natural-frequency spread — how hard sync is to reach |
 | **Rain** | **Leak rate** — slow leak lets buckets accumulate into heavy irregular drips; fast leak keeps only the strongest bursts |
 | **Meteors** | Density wander on top of the hidden weather system |
+| **Cicadas** | Rate spread across the field, so it never sounds like one insect multiplied |
 
 ## Inputs
 
 | Jack | Function |
 |------|----------|
-| **Pulse In 1** | **The Spook** — a hardware interrupt that disrupts the environment. Horses: reset all phases (a massive unified flam). Geese: spook the flock into a guaranteed cascade. Frogs: splash — scramble every phase, destroying sync. Rain: wind gust — dump energy into every bucket. Meteors: bolide — spike density to maximum. |
+| **Pulse In 1** | **The Spook** — a hardware interrupt that disrupts the environment. Horses: reset the stride (a unified landing). Geese: spook the flock into a guaranteed cascade. Frogs: splash — scramble every phase, destroying sync. Rain: wind gust — dump energy into every bucket. Meteors: bolide — spike density to maximum. **Cicadas: a footstep in the grass — the whole field falls silent at once**, then creeps back in. |
 | **Pulse In 2** | **The Clock** — an external tempo the ecosystem *entrains to* rather than obeys. Frogs treat it as a phantom frog in the pond and couple to it with whatever strength Knob Main is set to, so you can dial anywhere from locked-to-the-clock to completely indifferent. Horses lock their stride to it. Geese lean their honks toward the beat; Rain tops up every bucket so the nearest tips on the beat; Meteors swell the debris field. Stop the clock and the ecosystem drifts back to its own timing within ~3 seconds. |
 | **CV In 1** | Modulates **Knob Main** (the physics variable) |
 | **CV In 2** | Modulates **Knob X** (population) |
@@ -109,15 +112,46 @@ physical trigger.
 | **CV Out 1** | Continuous internal state of agent 1 (phase ramp, bucket level, excitation…) as 0–5 V |
 | **CV Out 2** | Global ecosystem state — debris density, flock agitation, chorus coherence |
 
-**Audio Out 1 / 2** — all agents rendered and panned across the stereo field.
+**Audio Out 1 / 2** — all agents rendered and placed in the stereo field (see below).
 
-**LEDs** — 0–4 show the active ecosystem; LED 5 glows with trigger activity.
+**LEDs** — one LED per ecosystem. The active mode's LED sits at a dim "you are here"
+glow and flares to full on every trigger, so one light carries both meanings.
 
 ## Voices
 
-**Standard boot — synthesized.** Each mode gets its own optimized DSP timbre: a
-pitch-dropping sine thump for hooves, a buzzy filtered saw for honks, Karplus-Strong
-plucks for ribbits, high short pings for drips, and swept filtered noise for meteors.
+**Standard boot — synthesized.** Each mode has its own DSP timbre, built around whatever
+detail actually identifies the sound: hooves get a pitch-dropping body *plus a sharp
+band-passed noise transient* for shoe-on-stone; honks are a saw whose filter opens at the
+attack for that nasal kink; ribbits are Karplus-Strong; **drips rise in pitch as they
+decay**, which is the acoustic signature of a bubble collapsing in liquid and the reason a
+drip sounds like a drip; meteors are noise swept by a closing filter; cicadas are a high
+tone ring-modulated by a wing-beat buzz.
+
+### Round robins
+
+Every trigger picks one of four variants, and the variant *means* something:
+
+| Mode | What a variant is |
+|---|---|
+| **Horses** | **One per hoof** — hinds strike lower and heavier than fores, so the gait has an audible front/back shape as well as left/right. This is what stops a gait sounding like a drum machine. |
+| **Geese** | Four birds of different size |
+| **Frogs** | Four species in the chorus |
+| **Rain** | Four drip sizes |
+| **Meteors** | Four distances |
+| **Cicadas** | Four insects, tightly spread — a real field is fairly uniform |
+
+Everything except Horses picks at random with a **no-immediate-repeat** rule, so you never
+hear the same honk or drip twice running.
+
+### Stereo placement
+
+Panning comes from the ecosystem, not from a knob:
+
+- **Fixed** (Horses) — each hoof holds its own spot. You are standing beside an animal;
+  its legs do not wander around you.
+- **Spread** (Geese, Frogs, Cicadas) — every swarm member has its own place, so twelve
+  birds occupy twelve positions and a cascade sweeps across the field.
+- **Random** (Rain, Meteors) — each hit lands somewhere new, because each is a new object.
 
 **Alt boot (hold the momentary switch Down at power-on) — PCM.** Plays baked-in samples
 from flash instead. The repo ships procedural placeholders; drop real recordings into
@@ -127,9 +161,13 @@ from flash instead. The repo ships procedural placeholders; drop real recordings
 ffmpeg -i clop.wav -ac 1 -ar 48000 -f s8 samples/horses.raw
 ```
 
-Expected files: `horses.raw` `geese.raw` `frogs.raw` `rain.raw` `meteors.raw` (8-bit
-signed mono, 48 kHz). If `samples/` is absent the firmware still builds and alt-boot
-falls back to the synthesized voices.
+Expected files: `horses.raw` `geese.raw` `frogs.raw` `rain.raw` `meteors.raw`
+`cicadas.raw` (8-bit signed mono, 48 kHz). If `samples/` is absent the firmware still
+builds and alt-boot falls back to the synthesized voices.
+
+There is room for far more: code is ~100 KB of the 2 MB flash, leaving **~40 seconds** of
+48 kHz mono PCM — enough for eight distinct round-robin recordings per mode at a second
+each. The variant system is already wired for it.
 
 ---
 
@@ -148,7 +186,7 @@ for randomness. There is no `float` in the hot path and no libm; the RP2040 has 
 |---|---|
 | [fastmath.h](fastmath.h) / [fastmath.cpp](fastmath.cpp) | Sine LUT, PRNG, fixed-point helpers |
 | [biomimicry.h](biomimicry.h) | Shared types, `Engine` interface, control-rate constants |
-| [engines.cpp](engines.cpp) | The five physics models |
+| [engines.cpp](engines.cpp) | The six physics models |
 | [voices.cpp](voices.cpp) | Synth + PCM voice rendering, panning |
 | [main.cpp](main.cpp) | I/O, mode/routing UI, LEDs, boot dispatch |
 

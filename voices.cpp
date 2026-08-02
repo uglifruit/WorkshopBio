@@ -1,18 +1,13 @@
 // voices.cpp — voice rendering at 48kHz.
 //
 // Each mode gets a timbre that suggests its creature without pretending to be a
-// recording: a pitch-dropping sine for hooves, a formant-ish noise burst for
-// honks, Karplus-Strong for ribbits, a high short ping for drips, and a swept
-// noise swoosh for meteors.
+// recording, plus a round-robin variant system and a stereo strategy that comes
+// from the ecosystem rather than from a knob.
 
 #include "voices.h"
 #include "samples_default.h"   // pulls in samples.h if baked, else stubs
 
 namespace bio {
-
-// Equal-power-ish pan positions for agents 0..3, spread L to R. Q15 gains.
-static const int32_t kPanL[kNumAgents] = { 31000, 24000, 14000,  6000 };
-static const int32_t kPanR[kNumAgents] = {  6000, 14000, 24000, 31000 };
 
 // Per-mode envelope decay shifts (larger = longer tail at 48kHz).
 static const uint8_t kDecay[kNumModes] = {
@@ -20,7 +15,8 @@ static const uint8_t kDecay[kNumModes] = {
 	11,  // Geese   — honk with some length
 	11,  // Frogs   — ribbit body
 	8,   // Rain    — very short drip
-	13   // Meteors — long swoosh
+	13,  // Meteors — long swoosh
+	10   // Cicadas — short buzzing chirp
 };
 
 // Per-mode base pitch as a 48kHz phase increment (~ Hz * 89478).
@@ -29,11 +25,58 @@ static const uint32_t kBaseInc[kNumModes] = {
 	 39000000u,  // Geese   ~440Hz honk
 	 27000000u,  // Frogs   ~300Hz ribbit
 	124000000u,  // Rain    ~1.4kHz drip
-	  9000000u   // Meteors ~100Hz rumble under the noise
+	  9000000u,  // Meteors ~100Hz rumble under the noise
+	340000000u   // Cicadas ~3.8kHz stridulation
 };
 
-// Agent pitch offsets so four simultaneous hits don't sound like one. Q16.
-static const int32_t kAgentPitch[kNumAgents] = { 65536, 55000, 78000, 46000 };
+// Round-robin pitch offsets, Q16. In Horses these are the four hooves (hinds
+// heavier and lower than fores); elsewhere they are simply four individuals.
+static const int32_t kVariantPitch[kNumModes][kNumVariants] = {
+	// Horses: LH, LF, RH, RF. Hind hooves strike lower and heavier than fores,
+	// so the gait has an audible front/back shape, not just left/right.
+	{  56000,  74000,  60000,  79000 },
+	// Geese: four birds of different size.
+	{  65536,  52000,  78000,  44000 },
+	// Frogs: four species in the chorus.
+	{  65536,  49000,  88000,  61000 },
+	// Rain: four drip sizes.
+	{  65536,  81000,  53000,  92000 },
+	// Meteors: four distances.
+	{  65536,  48000,  86000,  57000 },
+	// Cicadas: four insects, tight spread — a real field is fairly uniform.
+	{  65536,  69000,  62000,  72000 }
+};
+
+// Stereo strategy per mode. The pan of a hit says something about the ecosystem:
+//   FIXED  — the agent always sits in the same place (a stable image; you are
+//            standing beside the animal and its legs do not move around you).
+//   SPREAD — each swarm member has its own fixed spot, so a cascade sweeps
+//            across the field.
+//   RANDOM — every hit lands somewhere new, because every hit is a new object.
+enum class PanMode : uint8_t { Fixed, Spread, Random };
+static const PanMode kPanMode[kNumModes] = {
+	PanMode::Fixed,   // Horses  — a stable animal in front of you
+	PanMode::Spread,  // Geese   — birds placed around you
+	PanMode::Spread,  // Frogs   — a pond, voices at fixed spots
+	PanMode::Random,  // Rain    — drips land wherever they land
+	PanMode::Random,  // Meteors — each strike is a new object crossing the sky
+	PanMode::Spread   // Cicadas — a dense field all around
+};
+
+/// Place a voice in the stereo field. `pos17` is 0 (hard left) to 16 (hard
+/// right), 8 = centre. Both gains keep a floor so a hard-panned hit still has
+/// presence in the other ear rather than vanishing — with only two outputs,
+/// fully-dead channels make a patch feel broken on a mono system.
+static inline void setPan(Voice &v, int pos17)
+{
+	if (pos17 < 0) pos17 = 0;
+	if (pos17 > 16) pos17 = 16;
+	int32_t r = pos17 * 2048;              // 0..32768
+	int32_t l = 32768 - r;
+	constexpr int32_t kFloor = 6000;
+	v.panL = kFloor + ((l * (32767 - kFloor)) >> 15);
+	v.panR = kFloor + ((r * (32767 - kFloor)) >> 15);
+}
 
 void VoiceBank::init(bool usePcm)
 {
@@ -41,13 +84,56 @@ void VoiceBank::init(bool usePcm)
 	for (int i = 0; i < kNumAgents; i++)
 	{
 		Voice &v = v_[i];
-		v.env = 0; v.phase = 0; v.inc = 0; v.pitchEnv = 0;
+		v.env = 0; v.phase = 0; v.phase2 = 0; v.inc = 0; v.inc2 = 0;
+		v.pitchEnv = 0;
 		v.noiseRng = 0x1234567u + static_cast<uint32_t>(i) * 2654435761u;
-		v.filt = 0; v.filt2 = 0;
-		v.decayShift = 10; v.mode = 0;
+		v.filt = 0; v.filt2 = 0; v.bp = 0;
+		v.decayShift = 10; v.mode = 0; v.variant = 0;
 		v.ksLen = 64; v.ksPos = 0;
 		for (int k = 0; k < 128; k++) v.ks[k] = 0;
 		v.pcm = nullptr; v.pcmLen = 0; v.pcmPos = 0; v.pcmInc = 65536;
+		setPan(v, 2 + i * 4);
+		lastVariant_[i] = 0xFF;
+	}
+}
+
+void VoiceBank::selectVariantAndPan(Voice &v, int agent, Mode m)
+{
+	int mi = static_cast<int>(m);
+
+	if (m == Mode::Horses)
+	{
+		// One variant per hoof, fixed. This is the case that matters most: a
+		// gait only sounds like an animal when each leg has its own voice.
+		v.variant = static_cast<uint8_t>(agent);
+	}
+	else
+	{
+		// Round robin with no immediate repeat, so you never hear the same
+		// honk or drip twice running.
+		uint8_t pick;
+		do {
+			pick = static_cast<uint8_t>(xorshift32(rng_) & (kNumVariants - 1));
+		} while (pick == lastVariant_[agent] && kNumVariants > 1);
+		v.variant = pick;
+		lastVariant_[agent] = pick;
+	}
+
+	switch (kPanMode[mi])
+	{
+	case PanMode::Fixed:
+		// Agent's own fixed spot — a stable stereo image.
+		setPan(v, 2 + agent * 4);
+		break;
+	case PanMode::Spread:
+		// Agent's spot, offset by which swarm member this is, so the twelve
+		// birds occupy twelve places rather than four.
+		setPan(v, 1 + agent * 4 + (v.variant & 3));
+		break;
+	case PanMode::Random:
+		// Anywhere — every drip and every meteor is a new object.
+		setPan(v, static_cast<int>(xorshift32(rng_) % 17));
+		break;
 	}
 }
 
@@ -61,19 +147,26 @@ void VoiceBank::note(int i, Mode m, int32_t accent, int32_t variation)
 	v.decayShift = kDecay[mi];
 	v.pitchEnv = kQ16One;
 	v.phase = 0;
+	v.phase2 = 0;
 	v.filt = 0;
 	v.filt2 = 0;
+	v.bp = 0;
 
-	// Pitch: mode base, offset per agent, then nudged by the variation amount
-	// so repeated hits are never identical.
-	int32_t pitchScale = mul_q16(kAgentPitch[i], kQ16One + (variation >> 2) - 8192);
+	selectVariantAndPan(v, i, m);
+
+	// Pitch: mode base, shifted by the round-robin variant, then nudged by the
+	// engine's state so repeated hits are never quite identical.
+	int32_t pitchScale = kVariantPitch[mi][v.variant];
+	pitchScale = mul_q16(pitchScale, kQ16One + (variation >> 3) - 4096);
 	if (pitchScale < 8192) pitchScale = 8192;
+
 	v.inc = static_cast<uint32_t>(
 		(static_cast<int64_t>(kBaseInc[mi]) * pitchScale) >> 16);
+	// Second oscillator, slightly detuned, for the modes that use it.
+	v.inc2 = v.inc + (v.inc >> 6);
 
 	if (usePcm_)
 	{
-		// PCM backend: pick this mode's sample, play at a per-agent rate.
 		v.pcm    = kModeSample[mi];
 		v.pcmLen = kModeSampleLen[mi];
 		v.pcmPos = 0;
@@ -124,23 +217,40 @@ void VoiceBank::render(int active, int16_t &l, int16_t &r)
 			{
 			case Mode::Horses:
 			{
-				// Sine with a fast downward pitch sweep — the classic thump.
+				// Hoof on a hard road: a pitch-dropping sine body for the mass
+				// of the animal, plus a sharp noise transient for the shoe
+				// striking stone. The transient is most of what makes it read
+				// as a hoof rather than a kick drum.
 				uint32_t inc = static_cast<uint32_t>(
 					(static_cast<int64_t>(v.inc) * (kQ16One + v.pitchEnv * 3)) >> 16);
 				v.phase += inc;
-				s = fast_sin(v.phase) >> 4;
+				int32_t body = fast_sin(v.phase) >> 4;
+
+				int32_t click = 0;
+				if (v.pitchEnv > 40000)
+				{
+					// Band-passed noise for the stony "tk" of the impact.
+					int32_t n = rand_bipolar(v.noiseRng);
+					v.bp += (n - v.bp) >> 1;
+					v.filt += (v.bp - v.filt) >> 3;
+					click = (v.bp - v.filt) >> 3;
+				}
+				s = body + click;
 				v.pitchEnv = fast_exp_decay(v.pitchEnv, 6);
 				break;
 			}
 			case Mode::Geese:
 			{
-				// Buzzy honk: a saw-ish tone through two poles of low-pass, so
-				// it keeps a nasal formant edge rather than going pure.
+				// Honk: a buzzy saw through two poles, with the cutoff opening
+				// at the attack so it starts hard and softens — the nasal
+				// "kink" of the call.
 				v.phase += v.inc;
 				int32_t saw = static_cast<int32_t>(v.phase >> 20) - 2048;
-				v.filt  += (saw - v.filt) >> 2;
+				int32_t k = 1 + (v.pitchEnv >> 15);
+				v.filt  += (saw - v.filt) >> k;
 				v.filt2 += (v.filt - v.filt2) >> 1;
 				s = v.filt2;
+				v.pitchEnv = fast_exp_decay(v.pitchEnv, 8);
 				break;
 			}
 			case Mode::Frogs:
@@ -157,12 +267,30 @@ void VoiceBank::render(int active, int16_t &l, int16_t &r)
 			}
 			case Mode::Rain:
 			{
-				// High short ping with a touch of noise at the attack.
-				v.phase += v.inc;
+				// Water drip: a sine whose pitch RISES as it decays, which is
+				// the acoustic signature of a bubble collapsing in liquid and
+				// the reason a drip sounds like a drip.
+				uint32_t inc = static_cast<uint32_t>(
+					(static_cast<int64_t>(v.inc) *
+					 (kQ16One + ((kQ16One - v.pitchEnv) >> 1))) >> 16);
+				v.phase += inc;
 				s = fast_sin(v.phase) >> 4;
-				if (v.pitchEnv > kQ16One / 2)
+				if (v.pitchEnv > 50000)
 					s += rand_bipolar(v.noiseRng) >> 5;
-				v.pitchEnv = fast_exp_decay(v.pitchEnv, 4);
+				v.pitchEnv = fast_exp_decay(v.pitchEnv, 5);
+				break;
+			}
+			case Mode::Cicadas:
+			{
+				// Stridulation: a high tone chopped by a fast amplitude buzz.
+				// Two oscillators, one audio-rate and one at the wing-beat
+				// rate, multiplied — that ring-mod is the insect quality.
+				v.phase += v.inc;
+				v.phase2 += v.inc >> 7;
+				int32_t tone = fast_sin(v.phase) >> 4;
+				int32_t buzz = (fast_sin(v.phase2) >> 8) + 128;   // 0..256
+				s = (tone * buzz) >> 8;
+				s += rand_bipolar(v.noiseRng) >> 6;   // a little chitin hiss
 				break;
 			}
 			case Mode::Meteors:
@@ -188,8 +316,8 @@ void VoiceBank::render(int active, int16_t &l, int16_t &r)
 		// Silence agents outside the current population.
 		if (i >= active) continue;
 
-		accL += mul_q15(s, kPanL[i]);
-		accR += mul_q15(s, kPanR[i]);
+		accL += mul_q15(s, v.panL);
+		accR += mul_q15(s, v.panR);
 	}
 
 	l = clamp12(accL);

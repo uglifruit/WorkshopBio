@@ -584,4 +584,129 @@ void MeteorsEngine::tick(const Ctrl &c, EngineOut &out)
 	out.global = effective;
 }
 
+// ===========================================================================
+// Mode 6 — Cicadas: density-dependent chorus
+// ===========================================================================
+//
+// The other modes couple on phase (Frogs) or on excitation events (Geese).
+// Cicadas couple on AMPLITUDE: each insect calls faster when the field around
+// it is already loud, and the field is just the sum of everyone calling. That
+// is a positive feedback loop, so on its own it would saturate — fatigue is
+// what turns it into a wave. Insects that have been calling hard get tired,
+// drop out, the field quietens, they recover, and it swells again.
+
+void CicadasEngine::reset(uint32_t seed)
+{
+	rng_ = seed | 1u;
+	field_ = 0;
+	for (int i = 0; i < kSwarmSize; i++)
+	{
+		phase_[i] = xorshift32(rng_);
+		fatigue_[i] = 0;
+	}
+}
+
+void CicadasEngine::tick(const Ctrl &c, EngineOut &out)
+{
+	out.triggers = 0;
+
+	int swarm = c.population * kSwarmPerAgent;
+
+	// Pulse In = a footstep in the grass: the whole field falls silent at once,
+	// then creeps back in as the insects regain their nerve. The inverse of the
+	// other modes' spooks, and the thing every cicada field actually does.
+	if (c.spook)
+		for (int i = 0; i < swarm; i++) fatigue_[i] = kQ16One;
+
+	// Pulse In 2 nudges the field louder on each beat, so the swells lean
+	// toward an external tempo.
+	if (c.clock) field_ = (field_ + kQ16One / 4 > kQ16One) ? kQ16One
+	                                                       : field_ + kQ16One / 4;
+
+	// Knob Main = COUPLING DEPTH, and it scales both halves of the feedback loop
+	// at once: how much the field speeds insects up, and how much being in a
+	// loud field tires them out. Scaling both is what makes the knob mean
+	// something — with fatigue fixed, the field surged just as hard at zero
+	// coupling and the control did nothing.
+	//   0.0 = independent insects, a steady even drone
+	//   1.0 = the field drives itself into surges that collapse into silence
+	int32_t coupling = c.physics;
+
+	// Base call rate, sped up by however loud the field already is. This is the
+	// positive half of the loop.
+	constexpr int32_t kBaseHz_q8 = 600;   // ~2.3 Hz
+	int32_t rateScale = kQ16One + mul_q16(mul_q16(field_, coupling), kQ16One) * 6;
+	int32_t hz_q8 = mul_q16(kBaseHz_q8 << 4, rateScale) >> 4;
+
+	int32_t called = 0;
+	uint32_t fired = 0;
+	for (int i = 0; i < swarm; i++)
+	{
+		// Fatigue slows an insect right down rather than silencing it outright,
+		// so the field thins out gradually instead of switching off.
+		int32_t tired = kQ16One - (fatigue_[i] * 3 / 4);
+		int32_t myHz = mul_q16(hz_q8, tired);
+
+		// Chaos spreads the natural rates so the swarm never sounds like one
+		// insect multiplied.
+		if (c.chaos > 0)
+		{
+			int32_t spread = mul_q16(rand_bipolar(rng_) << 1, c.chaos);
+			myHz += (myHz >> 3) * spread >> 15;
+		}
+		if (myHz < 16) myHz = 16;
+
+		uint32_t inc = static_cast<uint32_t>(
+			(static_cast<int64_t>(myHz) * 4294967296LL) / (256LL * kCtrlRate));
+
+		uint32_t before = phase_[i];
+		phase_[i] += inc;
+
+		if (phase_[i] < before)          // wrapped: this insect called
+		{
+			called++;
+			fired |= (1u << i);
+			fatigue_[i] += mul_q16(kQ16One / 3, coupling);   // calling is work
+			if (fatigue_[i] > kQ16One) fatigue_[i] = kQ16One;
+		}
+
+		// The negative half of the loop: simply BEING in a loud field is
+		// tiring, whether or not this insect called. Without this the swarm
+		// spread itself evenly and never surged — collective exhaustion is what
+		// turns feedback into a wave rather than a runaway.
+		fatigue_[i] += mul_q16(mul_q16(field_, coupling), kQ16One / 150);
+		if (fatigue_[i] > kQ16One) fatigue_[i] = kQ16One;
+
+		// Recovery is slow — slower than the build-up, which is what sets the
+		// period of the swell.
+		fatigue_[i] = fast_exp_decay(fatigue_[i], 12);
+	}
+
+	// The field is the perceived loudness of the whole chorus: it rises quickly
+	// as insects join and falls away slowly, so the swarm hears its own recent
+	// past rather than only the current instant.
+	int32_t instant = (swarm > 0)
+		? (called * kQ16One * 8 / swarm) : 0;
+	if (instant > kQ16One) instant = kQ16One;
+	field_ = (instant > field_) ? slew(field_, instant, 4)
+	                            : slew(field_, instant, 8);
+
+	// Fold the swarm onto the outputs: a channel fires if any of its insects
+	// called, and carries its group's mean fatigue as state CV.
+	for (int a = 0; a < kNumAgents; a++)
+	{
+		if (a >= c.population) { out.state[a] = 0; continue; }
+		int32_t groupFatigue = 0;
+		for (int k = 0; k < kSwarmPerAgent; k++)
+		{
+			int i = a * kSwarmPerAgent + k;
+			if (fired & (1u << i)) out.triggers |= (1 << a);
+			groupFatigue += fatigue_[i];
+		}
+		out.state[a] = groupFatigue / kSwarmPerAgent;
+	}
+
+	out.global = field_;
+}
+
 } // namespace bio

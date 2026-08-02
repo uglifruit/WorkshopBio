@@ -6,7 +6,7 @@ Usage:
 
 Expects one file per mode, 8-bit SIGNED mono raw at 48kHz:
 
-    horses.raw  geese.raw  frogs.raw  rain.raw  meteors.raw
+    horses.raw  geese.raw  frogs.raw  rain.raw  meteors.raw  cicadas.raw
 
 Emits `const signed char <mode>_pcm[]` + `const unsigned <mode>_pcm_len` for
 each. A missing file becomes a 1-sample silent stub, so a partial sample set
@@ -21,7 +21,7 @@ so keep each sample well under a second — these are one-shot percussive hits.
 import os
 import sys
 
-MODES = ["horses", "geese", "frogs", "rain", "meteors"]
+MODES = ["horses", "geese", "frogs", "rain", "meteors", "cicadas"]
 
 
 def emit(name, data):

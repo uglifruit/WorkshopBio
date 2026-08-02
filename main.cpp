@@ -37,6 +37,7 @@ public:
 		engines_[2] = &frogs_;
 		engines_[3] = &rain_;
 		engines_[4] = &meteors_;
+		engines_[5] = &cicadas_;
 	}
 
 	virtual void ProcessSample()
@@ -164,11 +165,26 @@ private:
 			cvLevel_[1] = out.global;
 		}
 
-		// --- LEDs: 0-4 show the mode, 5 glows with activity. ---
-		for (int i = 0; i < kNumModes; i++) LedOn(i, i == mode_);
+		// --- LEDs ---
+		// Six modes on six LEDs leaves none spare for an activity indicator, so
+		// the two jobs share: the mode's own LED sits at a dim "you are here"
+		// glow and flares to full on every trigger. One light, both meanings.
 		if (mask) activity_ = kQ16One;
-		LedBrightness(5, static_cast<uint16_t>(activity_ >> 4));
 		activity_ = fast_exp_decay(activity_, 3);
+
+		for (int i = 0; i < kNumModes; i++)
+		{
+			if (i == mode_)
+			{
+				constexpr int32_t kIdleGlow = kQ16One / 5;
+				int32_t level = kIdleGlow + mul_q16(activity_, kQ16One - kIdleGlow);
+				LedBrightness(i, static_cast<uint16_t>(level >> 4));
+			}
+			else
+			{
+				LedOff(i);
+			}
+		}
 
 		seed_ = seed_ * 1664525u + 1013904223u;
 	}
@@ -230,6 +246,7 @@ private:
 	FrogsEngine   frogs_;
 	RainEngine    rain_;
 	MeteorsEngine meteors_;
+	CicadasEngine cicadas_;
 	Engine       *engines_[kNumModes];
 
 	VoiceBank voices_;

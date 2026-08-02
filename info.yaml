@@ -1,6 +1,6 @@
 draft: true
 Name: BioMimicry
-short-description: A generative stochastic rhythm card. Five mathematical physics engines (horses, geese, frogs, rain, meteors) drive four agents to produce organic, semi-random triggers, CV and audio.
+short-description: A generative stochastic rhythm card. Six mathematical physics engines (horses, geese, frogs, rain, meteors, cicadas) drive four agents to produce organic, semi-random triggers, CV and audio.
 Language: C++ (Pico SDK / ComputerCard)
 Creator: Andy Jenkinson (uglifruit)
 Version: 0.1.0
@@ -15,13 +15,14 @@ tags:
   - stochastic
   - triggers
   - drums
+  - swarm
 
 summary: |
   Modular synthesis often traps us in rigid, Euclidean grids. BioMimicry breaks
-  that grid by using five distinct mathematical physics engines to generate
+  that grid by using six distinct mathematical physics engines to generate
   triggers and audio that feel unmistakably alive.
 
-  Tap the momentary switch to cycle five ecosystems, each with its own internal
+  Tap the momentary switch to cycle six ecosystems, each with its own internal
   logic. HORSES: one stride clock driving four hooves at their real equine
   footfall offsets - walk, trot, canter and gallop as the actual biomechanical
   patterns, suspension phases and all. GEESE: a cascading probability network
@@ -30,13 +31,22 @@ summary: |
   chaotic swarms. RAIN: leaky integrate-and-fire buckets that fill with noise and
   splash downstream into each other when they overflow. METEORS: an inhomogeneous
   Poisson process where a hidden weather system swells a swarm of twelve from
-  eerie silence into dense overlapping barrages.
+  eerie silence into dense overlapping barrages. CICADAS: a field of twelve
+  insects coupled on loudness rather than on phase or events - they call faster
+  the louder the field already is, and tire from being in it, which produces the
+  slow pulsing waves of a real cicada field.
 
   Knob X sets the population (1-4 agents), Knob Main is the physics variable for
   the current ecosystem, and Knob Y adds chaos/humanization. Pulse In 1 is a
   hardware interrupt that disrupts the environment - resetting the horses,
-  spooking the geese, splashing the frogs, gusting the rain, or triggering a
-  bolide meteor burst.
+  spooking the geese, splashing the frogs, gusting the rain, triggering a bolide
+  meteor burst, or silencing the cicada field with a footstep. Pulse In 2 is an
+  external clock the ecosystem entrains to rather than obeys.
+
+  Voices use round robins that mean something: in Horses each variant is a
+  different hoof, with hinds striking lower than fores. Stereo placement comes
+  from the ecosystem too - a stable image for the horse, fixed spots around you
+  for flocks and choruses, and a new position per hit for rain and meteors.
 
   Outputs discrete triggers for drum modules, unified CV to modulate a patch, or
   its own internal physical-modeling audio. Hold the momentary switch down at
@@ -60,7 +70,7 @@ panel:
       description: Not used in this version.
     - id: PulseIn1
       name: The Spook (interrupt)
-      description: Disrupts the environment. Horses - reset all phases into a unified flam. Geese - spook the flock into a guaranteed cascade. Frogs - splash, scrambling all phases and destroying sync. Rain - wind gust, dumping energy into every bucket. Meteors - bolide, spiking density to maximum.
+      description: Disrupts the environment. Horses - reset the stride into a unified landing. Geese - spook the flock into a guaranteed cascade. Frogs - splash, scrambling all phases and destroying sync. Rain - wind gust, dumping energy into every bucket. Meteors - bolide, spiking density to maximum. Cicadas - a footstep in the grass, silencing the whole field at once before it creeps back in.
     - id: PulseIn2
       name: The Clock (entrainment)
       description: An external tempo the ecosystem entrains to rather than obeys. Frogs treat it as a phantom oscillator and couple to it at whatever strength Knob Main sets, from locked-to-clock to indifferent. Horses lock their stride to it. Geese lean honks toward the beat, Rain tops up the buckets, Meteors swell the debris field. Stops mattering ~3 seconds after the clock stops.
@@ -79,23 +89,23 @@ panel:
       description: Switch Up - agent 4's trigger as a calibrated 5V blip. Switch Middle - the global ecosystem state (debris density, flock agitation, chorus coherence) as 0-5V.
     - id: AudioOut1
       name: Audio left
-      description: All agents rendered and panned across the stereo field. Synthesized voices, or baked-in PCM samples in alt boot.
+      description: All agents rendered and placed in the stereo field by the mode's own logic - a stable image for Horses, fixed spots for the flock modes, a new position per hit for Rain and Meteors. Synthesized voices, or baked-in PCM samples in alt boot.
     - id: AudioOut2
       name: Audio right
-      description: All agents rendered and panned across the stereo field. Synthesized voices, or baked-in PCM samples in alt boot.
+      description: All agents rendered and placed in the stereo field by the mode's own logic - a stable image for Horses, fixed spots for the flock modes, a new position per hit for Rain and Meteors. Synthesized voices, or baked-in PCM samples in alt boot.
 
 controls:
   knobs:
     - when: { z: any }
       main:
         name: The Physics
-        description: The fundamental law of the current ecosystem. Horses - gait and stride rate (walk/trot/canter/gallop, each with its own tempo band). Geese - contagion level. Frogs - decoupling (0 = locked sync, 1 = chaos). Rain - downpour intensity. Meteors - debris density.
+        description: The fundamental law of the current ecosystem. Horses - gait and stride rate (walk/trot/canter/gallop, each with its own tempo band). Geese - contagion level. Frogs - decoupling (0 = locked sync, 1 = chaos). Rain - downpour intensity. Meteors - debris density. Cicadas - coupling depth (0 = a steady drone, 1 = surges that collapse into silence).
       x:
         name: Population
-        description: How many agents are alive in the ecosystem, 1 to 4. In the flock modes (Geese, Meteors) each output channel carries three swarm members, so a full population is twelve birds or meteors.
+        description: How many agents are alive in the ecosystem, 1 to 4. In the swarm modes (Geese, Meteors, Cicadas) each output channel carries three members, so a full population is twelve birds, meteors or insects.
       y:
         name: Chaos / Humanize
-        description: Per-mode randomness and spread - per-hoof timing jitter (Horses), spontaneous spark rate (Geese), natural-frequency spread (Frogs), leak rate (Rain), density wander (Meteors).
+        description: Per-mode randomness and spread - per-hoof timing jitter (Horses), spontaneous spark rate (Geese), natural-frequency spread (Frogs), leak rate (Rain), density wander (Meteors), rate spread across the field (Cicadas).
   switches:
     - id: Z
       up:
@@ -106,7 +116,7 @@ controls:
         description: All agents OR'd onto Pulse Out 1, an accent on Pulse Out 2, and continuous internal-state CV on both CV outs.
       down:
         name: Cycle ecosystem
-        description: Momentary tap cycles through the five ecosystems (Horses, Geese, Frogs, Rain, Meteors). HOLD at power-on to boot the PCM sample voices instead of the synthesized ones.
+        description: Momentary tap cycles through the six ecosystems (Horses, Geese, Frogs, Rain, Meteors, Cicadas). HOLD at power-on to boot the PCM sample voices instead of the synthesized ones.
 
   leds:
     - when: { z: any }
@@ -114,7 +124,7 @@ controls:
       items:
         - id: LED0
           name: Ecosystem / activity
-          description: LEDs 0-4 show the active ecosystem (Horses, Geese, Frogs, Rain, Meteors). LED 5 glows with trigger activity across the agents.
+          description: One LED per ecosystem (Horses, Geese, Frogs, Rain, Meteors, Cicadas). The active mode's LED sits at a dim glow and flares to full on every trigger, so one light shows both which ecosystem is running and how busy it is.
 
 host:
   notes: |

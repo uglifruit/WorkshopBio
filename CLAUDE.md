@@ -57,7 +57,7 @@ reach for libm or float here.
 |------|---------|
 | `main.cpp` | Card entry point, `ProcessSample()`, UI, output routing, boot dispatch |
 | `biomimicry.h` | Shared types, `Engine` interface, control-rate constants |
-| `engines.cpp/.h` | The five physics models |
+| `engines.cpp/.h` | The six physics models |
 | `voices.cpp/.h` | Synth + PCM voice rendering and panning |
 | `fastmath.h/.cpp` | Sine LUT, PRNG, fixed-point helpers |
 | `samples_default.h` | `__has_include` shim — builds with or without baked PCM |
