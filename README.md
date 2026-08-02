@@ -1,103 +1,172 @@
-# BioMimicry — for the Music Thing Workshop Computer
+# BioMimicry — Organic Rhythms for the Workshop Computer
 
-**A program card for the Music Thing Modular Workshop System Computer.**
+**A generative stochastic rhythm card born under the dark skies of rural Wales.**
 
-> **Status: scaffold.** The card builds, flashes and runs — the BioMimicry engine
-> itself is being written. This README grows with it.
+Modular synthesis often traps us in rigid, Euclidean grids. BioMimicry breaks that grid
+by using **five distinct mathematical physics engines** to generate triggers, CV and audio
+that feel unmistakably alive.
 
-Runs on a real Workshop Computer. Built on the RP2040 with
-[ComputerCard](https://github.com/TomWhitwell/Workshop_Computer) (Chris Johnson).
+It was built to capture the semi-random behaviours of the natural world: the polyrhythmic
+clopping of horses on a road, the cascading panic of a flock of geese, the rushing
+accumulator of a waterfall walk, and the sudden silent clustering of a meteor shower
+overhead. *(We added the frogs later — there weren't any on the farm, but the swamp
+mathematics were too good to leave out.)*
+
+Runs on a real Music Thing Modular Workshop System Computer. Built on the RP2040 with
+[ComputerCard](https://github.com/TomWhitwell/Workshop_Computer).
+
+> **Status:** firmware complete and building; awaiting hardware validation.
 
 ---
 
-## What it does
+## The Ecosystems
 
-*(To be written as the engine lands.)*
+Tap the momentary switch (Down) to cycle habitats. Each has its own internal logic.
 
-The scaffold firmware currently proves the hardware path end to end: Knob Main
-drives a slow triangle LFO on CV Out 1, Knob X sets a static CV on CV Out 2,
-audio and pulses pass through, and the LEDs sweep so an unpatched card visibly
-shows it is running.
+| Mode | Model | Behaviour |
+|---|---|---|
+| **Horses** | Phase-drifting clocks | Polyrhythmic clocks with slightly different "leg lengths" (1.00 / 0.98 / 1.03 / 0.95×). Rhythms drift in and out of phase forever, shifting from heavy plodding walks to asymmetrical galloping bursts. |
+| **Geese** | Stochastic contagion | A cascading probability network. One voice firing spikes the probability of the others, creating tight, reactive clusters of conversational sound that erupt and fade. |
+| **Frogs** | Coupled oscillators | The Kuramoto model. Independent voices pull on each other's timing, fighting between perfect metronomic synchronisation and chaotic granular swarms. |
+| **Rain** | Leaky integrate-and-fire | Buckets fill with noise and constantly leak. When one overflows it fires. Sounds like a drum circle constantly rushing and dragging. |
+| **Meteors** | Inhomogeneous Poisson | An invisible slow-moving weather system dictates trigger density. Long eerie silences swell smoothly into heavy overlapping barrages. |
 
 ## Panel
 
 | Control | Function |
 |---------|----------|
-| **Knob Main** | *(scaffold: LFO rate on CV Out 1)* |
-| **Knob X** | *(scaffold: static CV on CV Out 2)* |
-| **Knob Y** | — |
-| **Switch Up** | — |
-| **Switch Middle** | — |
-| **Switch Down** | — |
+| **Knob Main** | **The Physics** — the fundamental law of the current ecosystem (Gait & tempo · Contagion · Decoupling · Downpour · Debris density) |
+| **Knob X** | **Population** — how many agents (1–4) are alive in the ecosystem |
+| **Knob Y** | **Chaos / Humanize** — per-mode randomness and spread (timing jitter, spark rate, frequency spread, threshold variance, LFO wander) |
+| **Switch Down** (momentary) | **Tap to cycle** the ecosystem. **Hold at power-on** to boot the PCM sample voices. |
+| **Switch Up** | Routing: **Discrete** |
+| **Switch Middle** | Routing: **Summed / CV** |
+
+### Per-mode meaning of Knob Main
+
+| Mode | Knob Main |
+|---|---|
+| **Horses** | Gait **and** master speed. `0.00–0.25` Walk `1—2—3—4` · `0.25–0.50` Trot `[1+2]—[3+4]` · `0.50–0.75` Canter `1—[2+3]—4—rest` · `0.75–1.00` Gallop `1-2-3-4——rest` |
+| **Geese** | **Contagion** — 0.0 nodes ignore each other; 1.0 one trigger causes an instant panicked chain reaction |
+| **Frogs** | **Decoupling** — 0.0 is maximum coupling (locked metronomic sync); 1.0 is zero coupling (total chaos) |
+| **Rain** | **Downpour** — 0.0 leak exceeds input (silence); 1.0 rapid stuttering torrents |
+| **Meteors** | **Debris density** — 0.0 rare isolated hits; 0.5 long silences swelling into dense waves; 1.0 constant barrage |
 
 ## Inputs
 
 | Jack | Function |
 |------|----------|
-| **CV In 1** | — |
-| **CV In 2** | — |
-| **Audio In 1** | *(scaffold: passes to Audio Out 1)* |
-| **Audio In 2** | *(scaffold: passes to Audio Out 2)* |
-| **Pulse In 1** | *(scaffold: passes to Pulse Out 1)* |
-| **Pulse In 2** | *(scaffold: passes to Pulse Out 2)* |
+| **Pulse In 1** | **The Spook** — a hardware interrupt that disrupts the environment. Horses: reset all phases (a massive unified flam). Geese: spook the flock into a guaranteed cascade. Frogs: splash — scramble every phase, destroying sync. Rain: wind gust — dump energy into every bucket. Meteors: bolide — spike density to maximum. |
+| **Pulse In 2** | Secondary clock / sync input |
+| **CV In 1** | Modulates **Knob Main** (the physics variable) |
+| **CV In 2** | Modulates **Knob X** (population) |
 
 ## Outputs
 
+Routing is chosen with the toggle. The Computer has two pulse outs, so in Discrete mode
+agents 3 and 4 fire as **calibrated 5 V blips on the CV outs** — every agent gets a
+physical trigger.
+
+**Switch Up — Discrete**
+
 | Jack | Function |
 |------|----------|
-| **Pulse Out 1** | — |
-| **Pulse Out 2** | — |
-| **CV Out 1** | *(scaffold: triangle LFO)* |
-| **CV Out 2** | *(scaffold: Knob X)* |
-| **Audio Out 1** | — |
-| **Audio Out 2** | — |
-| **LEDs** | *(scaffold: running indicator)* |
+| **Pulse Out 1 / 2** | Agent 1 / Agent 2 triggers (5 ms gates) |
+| **CV Out 1 / 2** | Agent 3 / Agent 4 triggers, as 5 V blips |
 
-Printable panel overlays will live in [`panels/`](panels/).
+**Switch Middle — Summed / CV**
+
+| Jack | Function |
+|------|----------|
+| **Pulse Out 1** | All active agents logically OR'd |
+| **Pulse Out 2** | **Accent** — fires when two or more agents hit at once |
+| **CV Out 1** | Continuous internal state of agent 1 (phase ramp, bucket level, excitation…) as 0–5 V |
+| **CV Out 2** | Global ecosystem state — debris density, flock agitation, chorus coherence |
+
+**Audio Out 1 / 2** — all agents rendered and panned across the stereo field.
+
+**LEDs** — 0–4 show the active ecosystem; LED 5 glows with trigger activity.
+
+## Voices
+
+**Standard boot — synthesized.** Each mode gets its own optimized DSP timbre: a
+pitch-dropping sine thump for hooves, a buzzy filtered saw for honks, Karplus-Strong
+plucks for ribbits, high short pings for drips, and swept filtered noise for meteors.
+
+**Alt boot (hold the momentary switch Down at power-on) — PCM.** Plays baked-in samples
+from flash instead. The repo ships procedural placeholders; drop real recordings into
+`samples/` and rebuild:
+
+```sh
+ffmpeg -i clop.wav -ac 1 -ar 48000 -f s8 samples/horses.raw
+```
+
+Expected files: `horses.raw` `geese.raw` `frogs.raw` `rain.raw` `meteors.raw` (8-bit
+signed mono, 48 kHz). If `samples/` is absent the firmware still builds and alt-boot
+falls back to the synthesized voices.
 
 ---
 
+## Under the hood
+
+`ProcessSample()` runs at 48 kHz, but the physics don't need audio rate: engines tick at
+**1.5 kHz** (every 32nd sample), which is 32× cheaper and still gives 0.67 ms timing
+resolution — far finer than the ear resolves for triggers. Voice rendering, gate timing
+and CV output stay at the full 48 kHz.
+
+Everything is **integer fixed-point** — Q16 for levels and probabilities, `uint32_t`
+phase accumulators that wrap for free, a 257-entry quarter-wave sine LUT, and xorshift32
+for randomness. There is no `float` in the hot path and no libm; the RP2040 has no FPU.
+
+| File | Purpose |
+|---|---|
+| [fastmath.h](fastmath.h) / [fastmath.cpp](fastmath.cpp) | Sine LUT, PRNG, fixed-point helpers |
+| [biomimicry.h](biomimicry.h) | Shared types, `Engine` interface, control-rate constants |
+| [engines.cpp](engines.cpp) | The five physics models |
+| [voices.cpp](voices.cpp) | Synth + PCM voice rendering, panning |
+| [main.cpp](main.cpp) | I/O, mode/routing UI, LEDs, boot dispatch |
+
+### Verifying the physics
+
+`tools/simulate.py` models the engine math in Python and reports triggers/second per
+agent across the knob range — used to confirm every mode sweeps a musically useful range
+before flashing hardware:
+
+```sh
+python tools/simulate.py
+```
+
+(`tools/simulate.cpp` compiles the *real* engine sources natively if you have a host C++
+compiler; the Python model is the fallback.)
+
 ## Building
 
-Raspberry Pi Pico SDK (2.2.0), Arm GCC 14.2, Ninja:
+Raspberry Pi Pico SDK 2.2.0, Arm GCC 14.2, Ninja:
 
 ```sh
 cmake -B build -G Ninja
 cmake --build build
 ```
 
-Produces `build/biomimicry.uf2`. Hold **BOOTSEL** on the Computer's RP2040 while
-plugging in USB, then drop the `.uf2` on the mounted drive.
-
-On Windows the toolchain the Pico VS Code extension installs works directly —
-`CMakeLists.txt` picks it up via `~/.pico-sdk/cmake/pico-vscode.cmake`. To build
-from a shell, put its `cmake`, `ninja` and `toolchain` `bin` directories on `PATH`
-and set `PICO_SDK_PATH` to `~/.pico-sdk/sdk/2.2.0`.
-
-## Conventions
-
-`ProcessSample()` is called at **48 kHz**. It must be allocation-free and
-fixed-point — no `malloc`, no `float` in the hot path, no blocking. Audio and CV
-I/O is signed 12-bit (`-2048..2047`); knobs read unsigned 12-bit (`0..4095`).
-
-If the engine needs more compute than 48 kHz allows, the RP2040's second core is
-available (the `second_core` pattern used in
-[WorkshopZX](https://github.com/uglifruit/WorkshopZX)): core 1 free-runs the
-model, core 0 does 48 kHz I/O, and they meet through a small lock-free struct with
-a single writer per field. Hardware setup belongs in `main()` or on core 1 —
-never in the `ComputerCard` constructor.
+Produces `build/biomimicry.uf2`. Hold **BOOTSEL** while plugging in USB and drop it on
+the mounted drive. On Windows, `cmake`/`ninja` live in `~/.pico-sdk/` and are not on the
+default PATH — see [CLAUDE.md](CLAUDE.md) for the exact invocation.
 
 ---
 
 ## Credits
 
-- **Music Thing Modular Workshop System Computer** — Tom Whitwell / Music Thing
-  Modular. **ComputerCard** library by **Chris Johnson** (MIT, header-only).
+- **Music Thing Modular Workshop System Computer** — Tom Whitwell / Music Thing Modular.
+  **ComputerCard** by **Chris Johnson** (MIT, header-only).
 - **Raspberry Pi Pico SDK** / RP2040 — Raspberry Pi Ltd.
-- BioMimicry for the Workshop Computer — **Andy Jenkinson** (**uglifruit**), 2026,
-  with **Claude Code** (Anthropic).
+- The Kuramoto model — Yoshiki Kuramoto. Leaky integrate-and-fire and inhomogeneous
+  Poisson processes are standard computational-neuroscience and point-process models.
+- BioMimicry for the Workshop Computer — **Andy Jenkinson** (**uglifruit**), 2026, with
+  **Claude Code** (Anthropic).
 
 ## Licence
 
 The card's own source is Andy's. Vendored components keep their own licences
 (`ComputerCard.h`).
+
+*Step away from the grid and let the ecosystem run.*

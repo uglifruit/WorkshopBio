@@ -1,9 +1,9 @@
 draft: true
 Name: BioMimicry
-short-description: A program card for the Workshop System Computer. In development.
+short-description: A generative stochastic rhythm card. Five mathematical physics engines (horses, geese, frogs, rain, meteors) drive four agents to produce organic, semi-random triggers, CV and audio.
 Language: C++ (Pico SDK / ComputerCard)
 Creator: Andy Jenkinson (uglifruit)
-Version: 0.0.1
+Version: 0.1.0
 Status: In development
 License: MIT (card source); vendored components keep their own licences
 Repository: https://github.com/uglifruit/WorkshopBio
@@ -11,89 +11,120 @@ date: 2026-08-02
 
 tags:
   - generative
+  - rhythm
+  - stochastic
+  - triggers
+  - drums
 
 summary: |
-  BioMimicry — in development.
+  Modular synthesis often traps us in rigid, Euclidean grids. BioMimicry breaks
+  that grid by using five distinct mathematical physics engines to generate
+  triggers and audio that feel unmistakably alive.
 
-  The repository scaffold builds and runs on a real Workshop Computer; the engine
-  is being written. This entry is a draft and will be filled in as the card takes
-  shape.
+  Tap the momentary switch to cycle five ecosystems, each with its own internal
+  logic. HORSES: polyrhythmic clocks with slightly different leg lengths, drifting
+  in and out of phase across four gaits (walk/trot/canter/gallop). GEESE: a
+  cascading probability network where one honk spikes the odds for the rest.
+  FROGS: the Kuramoto model of coupled oscillators, fighting between metronomic
+  sync and chaotic swarms. RAIN: leaky integrate-and-fire buckets that fill with
+  noise and overflow. METEORS: an inhomogeneous Poisson process where a hidden
+  weather system swells activity from eerie silence into dense barrages.
+
+  Knob X sets the population (1-4 agents), Knob Main is the physics variable for
+  the current ecosystem, and Knob Y adds chaos/humanization. Pulse In 1 is a
+  hardware interrupt that disrupts the environment - resetting the horses,
+  spooking the geese, splashing the frogs, gusting the rain, or triggering a
+  bolide meteor burst.
+
+  Outputs discrete triggers for drum modules, unified CV to modulate a patch, or
+  its own internal physical-modeling audio. Hold the momentary switch down at
+  power-on to boot PCM sample voices instead of the synthesized ones.
+
+  Step away from the grid and let the ecosystem run.
 
 panel:
   inputs:
     - id: CVIn1
-      name: TBD
-      description: To be defined.
+      name: Physics modulation
+      description: Summed with Knob Main to modulate the current ecosystem's physics variable.
     - id: CVIn2
-      name: TBD
-      description: To be defined.
+      name: Population modulation
+      description: Summed with Knob X to modulate how many agents (1-4) are active.
     - id: AudioIn1
-      name: TBD
-      description: To be defined.
+      name: Unused
+      description: Not used in this version.
     - id: AudioIn2
-      name: TBD
-      description: To be defined.
+      name: Unused
+      description: Not used in this version.
     - id: PulseIn1
-      name: TBD
-      description: To be defined.
+      name: The Spook (interrupt)
+      description: Disrupts the environment. Horses - reset all phases into a unified flam. Geese - spook the flock into a guaranteed cascade. Frogs - splash, scrambling all phases and destroying sync. Rain - wind gust, dumping energy into every bucket. Meteors - bolide, spiking density to maximum.
     - id: PulseIn2
-      name: TBD
-      description: To be defined.
+      name: Secondary clock / sync
+      description: Secondary trigger input, available to the engines as a clock reference.
   outputs:
     - id: PulseOut1
-      name: TBD
-      description: To be defined.
+      name: Agent 1 (Discrete) / All agents (Summed)
+      description: Switch Up - agent 1's trigger. Switch Middle - all active agents logically OR'd together.
     - id: PulseOut2
-      name: TBD
-      description: To be defined.
+      name: Agent 2 (Discrete) / Accent (Summed)
+      description: Switch Up - agent 2's trigger. Switch Middle - an accent gate, firing when two or more agents hit simultaneously.
     - id: CVOut1
-      name: TBD
-      description: To be defined.
+      name: Agent 3 trigger (Discrete) / Agent 1 state (Summed)
+      description: Switch Up - agent 3's trigger as a calibrated 5V blip. Switch Middle - agent 1's continuous internal state (phase ramp, bucket level, excitation) as 0-5V.
     - id: CVOut2
-      name: TBD
-      description: To be defined.
+      name: Agent 4 trigger (Discrete) / Global state (Summed)
+      description: Switch Up - agent 4's trigger as a calibrated 5V blip. Switch Middle - the global ecosystem state (debris density, flock agitation, chorus coherence) as 0-5V.
     - id: AudioOut1
-      name: TBD
-      description: To be defined.
+      name: Audio left
+      description: All agents rendered and panned across the stereo field. Synthesized voices, or baked-in PCM samples in alt boot.
     - id: AudioOut2
-      name: TBD
-      description: To be defined.
+      name: Audio right
+      description: All agents rendered and panned across the stereo field. Synthesized voices, or baked-in PCM samples in alt boot.
 
 controls:
   knobs:
     - when: { z: any }
       main:
-        name: TBD
-        description: To be defined.
+        name: The Physics
+        description: The fundamental law of the current ecosystem. Horses - gait and master speed (walk/trot/canter/gallop). Geese - contagion level. Frogs - decoupling (0 = locked sync, 1 = chaos). Rain - downpour intensity. Meteors - debris density.
       x:
-        name: TBD
-        description: To be defined.
+        name: Population
+        description: How many agents are alive in the ecosystem, 1 to 4.
       y:
-        name: TBD
-        description: To be defined.
+        name: Chaos / Humanize
+        description: Per-mode randomness and spread - timing jitter (Horses), spark rate (Geese), natural-frequency spread (Frogs), threshold variance (Rain), density wander (Meteors).
   switches:
     - id: Z
       up:
-        name: TBD
-        description: To be defined.
+        name: Discrete routing
+        description: The four agents route individually - agents 1 and 2 to the pulse outs, agents 3 and 4 as 5V trigger blips on the CV outs.
       middle:
-        name: TBD
-        description: To be defined.
+        name: Summed / CV routing
+        description: All agents OR'd onto Pulse Out 1, an accent on Pulse Out 2, and continuous internal-state CV on both CV outs.
       down:
-        name: TBD
-        description: To be defined.
+        name: Cycle ecosystem
+        description: Momentary tap cycles through the five ecosystems (Horses, Geese, Frogs, Rain, Meteors). HOLD at power-on to boot the PCM sample voices instead of the synthesized ones.
 
   leds:
     - when: { z: any }
       display: list
       items:
         - id: LED0
-          name: Status
-          description: To be defined.
+          name: Ecosystem / activity
+          description: LEDs 0-4 show the active ecosystem (Horses, Geese, Frogs, Rain, Meteors). LED 5 glows with trigger activity across the agents.
 
 host:
   notes: |
-    In development — not yet released. See README.md.
+    In development. The physics engines run at a 1.5kHz control rate while voices,
+    gates and CV run at the full 48kHz; everything is integer fixed-point with no
+    float in the hot path.
 
-    CREDITS — ComputerCard by Chris Johnson (Music Thing Modular). Built with
+    Hold the momentary switch DOWN at power-on to boot PCM sample playback instead
+    of the synthesized voices. Samples are baked into flash at build time from
+    samples/*.raw; with none present the firmware falls back to synthesis.
+
+    CREDITS - ComputerCard by Chris Johnson (Music Thing Modular). The Kuramoto
+    model of coupled oscillators (Yoshiki Kuramoto); leaky integrate-and-fire and
+    inhomogeneous Poisson processes are standard point-process models. Built with
     Claude Code.

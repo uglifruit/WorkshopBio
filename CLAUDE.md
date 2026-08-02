@@ -42,18 +42,50 @@ Use the `second_core` pattern from `../WorkshopZX` (see its `spectrum.h` /
 I/O, and they communicate through a small lock-free struct with a **single
 writer per field** — no locks, no queues.
 
+## Architecture
+
+Physics engines tick at **1.5kHz** (`kCtrlDiv = 32` samples), voices/gates/CV at 48kHz.
+Keep that split: it is what makes four agents of Kuramoto coupling affordable.
+
+All fixed-point. Q16 (65536 = 1.0) for levels and probabilities, `uint32_t` phase
+accumulators that wrap for free, `fast_sin()` LUT, `xorshift32()` for randomness. Never
+reach for libm or float here.
+
 ## Layout
 
 | Path | Purpose |
 |------|---------|
-| `main.cpp` | Card entry point + `ProcessSample()` |
+| `main.cpp` | Card entry point, `ProcessSample()`, UI, output routing, boot dispatch |
+| `biomimicry.h` | Shared types, `Engine` interface, control-rate constants |
+| `engines.cpp/.h` | The five physics models |
+| `voices.cpp/.h` | Synth + PCM voice rendering and panning |
+| `fastmath.h/.cpp` | Sine LUT, PRNG, fixed-point helpers |
+| `samples_default.h` | `__has_include` shim — builds with or without baked PCM |
 | `ComputerCard.h` | Vendored MTM library — do not edit |
 | `info.yaml` | Workshop System card registry metadata |
+| `samples/` | 8-bit signed mono 48kHz `.raw` one-shots — git-ignored |
 | `panels/` | Printable panel overlay PNGs |
-| `tools/` | Build-time helpers (`bin2h.py` converts binaries to C headers) |
+| `tools/` | `gensamples.py` (placeholder PCM), `mksamples.py` (bake to header), `simulate.py` (engine rate check), `bin2h.py` |
 | `reference/` | Notes, papers, format docs backing the implementation |
 | `docs/` | Longer-form design notes / devlog |
 | `FLASHME/` | Local `.uf2` builds for flashing — git-ignored |
+
+## Verifying engine changes
+
+There is **no host C++ compiler on this machine**, so `tools/simulate.py` is a Python
+model of the engine math used to check trigger rates before flashing:
+
+```sh
+python tools/simulate.py     # triggers/sec per agent across the knob range
+```
+
+It duplicates the C++ constants — **if you change `engines.cpp`, update it too** (or
+delete it rather than let it drift). `tools/simulate.cpp` compiles the real sources
+natively if a host compiler ever becomes available.
+
+Sanity targets: no mode silent across its whole sweep, nothing above ~25 triggers/sec
+per agent (that stops reading as rhythm), and every knob should change *something*
+across its full travel.
 
 ## Repo
 
