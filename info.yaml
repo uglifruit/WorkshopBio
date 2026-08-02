@@ -1,0 +1,99 @@
+draft: true
+Name: BioMimicry
+short-description: A program card for the Workshop System Computer. In development.
+Language: C++ (Pico SDK / ComputerCard)
+Creator: Andy Jenkinson (uglifruit)
+Version: 0.0.1
+Status: In development
+License: MIT (card source); vendored components keep their own licences
+Repository: https://github.com/uglifruit/WorkshopBio
+date: 2026-08-02
+
+tags:
+  - generative
+
+summary: |
+  BioMimicry — in development.
+
+  The repository scaffold builds and runs on a real Workshop Computer; the engine
+  is being written. This entry is a draft and will be filled in as the card takes
+  shape.
+
+panel:
+  inputs:
+    - id: CVIn1
+      name: TBD
+      description: To be defined.
+    - id: CVIn2
+      name: TBD
+      description: To be defined.
+    - id: AudioIn1
+      name: TBD
+      description: To be defined.
+    - id: AudioIn2
+      name: TBD
+      description: To be defined.
+    - id: PulseIn1
+      name: TBD
+      description: To be defined.
+    - id: PulseIn2
+      name: TBD
+      description: To be defined.
+  outputs:
+    - id: PulseOut1
+      name: TBD
+      description: To be defined.
+    - id: PulseOut2
+      name: TBD
+      description: To be defined.
+    - id: CVOut1
+      name: TBD
+      description: To be defined.
+    - id: CVOut2
+      name: TBD
+      description: To be defined.
+    - id: AudioOut1
+      name: TBD
+      description: To be defined.
+    - id: AudioOut2
+      name: TBD
+      description: To be defined.
+
+controls:
+  knobs:
+    - when: { z: any }
+      main:
+        name: TBD
+        description: To be defined.
+      x:
+        name: TBD
+        description: To be defined.
+      y:
+        name: TBD
+        description: To be defined.
+  switches:
+    - id: Z
+      up:
+        name: TBD
+        description: To be defined.
+      middle:
+        name: TBD
+        description: To be defined.
+      down:
+        name: TBD
+        description: To be defined.
+
+  leds:
+    - when: { z: any }
+      display: list
+      items:
+        - id: LED0
+          name: Status
+          description: To be defined.
+
+host:
+  notes: |
+    In development — not yet released. See README.md.
+
+    CREDITS — ComputerCard by Chris Johnson (Music Thing Modular). Built with
+    Claude Code.

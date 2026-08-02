@@ -1,0 +1,13 @@
+build/
+build-*/
+UF2/
+
+# Build outputs kept locally for flashing, not published
+FLASHME/*.uf2
+FLASHME/*.bin
+FLASHME/*.elf
+
+# Editor / OS noise
+.vscode/
+.DS_Store
+Thumbs.db
