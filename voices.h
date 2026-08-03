@@ -59,20 +59,40 @@ struct Voice
 	uint32_t pcmInc;     // Q16 rate
 };
 
-/// One sustained drone voice, used only in Drone boot. Each agent gets an
-/// oscillator pair whose pitch and amplitude follow that agent's continuous
-/// engine state, so the same physics that fired triggers now bends tone.
+/// Grains per agent in Drone boot. Must be at least as large as the heaviest
+/// overlap any mode asks for, or the round-robin steals grains that are still
+/// playing and the texture chops. Eight covers the densest mode with headroom;
+/// four voices x eight grains is still only 32 concurrent readers, which is
+/// cheap (a pointer, a position and a rate each).
+constexpr int kNumGrains = 8;
+
+/// One grain: a playing copy of an animal recording.
+struct Grain
+{
+	const int8_t *pcm;
+	uint32_t len;
+	uint32_t pos;      // Q16 position within the sample
+	uint32_t inc;      // Q16 playback rate
+	int32_t  level;    // Q16 gain for this grain
+	bool     active;
+};
+
+/// One Drone voice: several overlapping grains of the SAME animal recordings
+/// the Rhythm card fires as one-shots.
+///
+/// The first version of this mode used saw oscillators whose pitch followed the
+/// engine state. That was a mistake: most engines put a PHASE RAMP in state[],
+/// so the pitch swept upward and snapped back, forever. It sounded like a broken
+/// synth rather than an ecosystem, and none of the sample library was used.
 struct DroneVoice
 {
-	uint32_t phase;
-	uint32_t phase2;   // detuned partner, for movement without vibrato
-	uint32_t inc;      // set at control rate, advanced at audio rate
-	uint32_t inc2;
-	int32_t  pitch;    // Q16, slewed target pitch
-	int32_t  level;    // Q16, slewed amplitude
-	int32_t  filt;     // one-pole for the noise-based modes
-	int32_t  bright;   // Q16, slewed filter opening
-	uint32_t noiseRng;
+	Grain    g[kNumGrains];
+	int32_t  level;      // Q16, slewed overall amplitude
+	int32_t  density;    // Q16, how often new grains are launched
+	int32_t  spread;     // Q16, pitch spread across grains
+	int32_t  countdown;  // control ticks until the next grain
+	uint8_t  next;       // round-robin grain slot
+	uint32_t rng;
 };
 
 class VoiceBank

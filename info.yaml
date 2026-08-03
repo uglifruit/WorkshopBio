@@ -119,7 +119,7 @@ controls:
         description: All agents OR'd onto Pulse Out 1, an accent on Pulse Out 2, and continuous internal-state CV on both CV outs.
       down:
         name: Cycle ecosystem
-        description: Momentary tap cycles through the six ecosystems (Horses, Geese, Frogs, Rain, Meteors, Cicadas). HOLD at power-on to boot DRONE mode - the same six engines driving sustained tone instead of triggers, an ambient counterpart to the rhythm card.
+        description: Momentary tap cycles through the six ecosystems (Horses, Geese, Frogs, Rain, Meteors, Cicadas). HOLD at power-on to boot DRONE mode, which granulates the same recordings into continuous texture instead of firing them as one-shots. The LEDs announce which mode booted - Rhythm lights the left column, Drone the right.
 
   leds:
     - when: { z: any }
@@ -143,6 +143,8 @@ host:
     takes four round-robin recordings baked from samples/*.raw; in Horses those
     four ARE the hooves (LH, LF, RH, RF). With no samples present the firmware
     builds and uses its synthesized voices.
+
+    Sample library from Pixabay, used under the Pixabay Content License.
 
     CREDITS - ComputerCard by Chris Johnson (Music Thing Modular). The Kuramoto
     model of coupled oscillators (Yoshiki Kuramoto); leaky integrate-and-fire and

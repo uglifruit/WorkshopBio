@@ -168,17 +168,19 @@ Panning comes from the ecosystem, not from a knob:
 ## Two instruments: Rhythm and Drone
 
 Hold the momentary switch **Down at power-on** to boot **DRONE** instead of the normal
-**RHYTHM** card. Same six engines, completely different instrument.
+**RHYTHM** card. On power-up the LEDs announce which you got: Rhythm lights the left
+column, Drone the right.
 
-In Drone, nothing fires one-shots. Each agent's continuous engine state bends a sustained
-tone instead: a horse's stride becomes a slow pitch sweep, a bucket's fill level a rising
-drone, the frogs' phase coherence a chorus that thickens as they lock and scatters as they
-don't. The whole-ecosystem value opens and closes a filter across all four voices, so the
-texture breathes with the global behaviour. Triggers survive only as small accents —
-events colour the texture rather than punctuating it. Knob Y detunes the oscillator pairs
-from a unison shimmer out to wide slow beating.
+**Rhythm** fires the recordings as discrete one-shots — one animal per trigger.
 
-It is an ambient counterpart to the rhythm card, made from exactly the same physics.
+**Drone** granulates the *same* recordings into continuous texture. Each voice keeps up
+to eight overlapping grains running, started at random points inside the samples and
+played back stretched, so a one-shot becomes a sustained layer. The engines drive grain
+**density** and **spread** rather than pitch: Cicadas becomes a continuous field, Frogs a
+whole pond at night, Rain a steady downpour, Horses a herd passing on a road. Knob Y
+widens the pitch spread across grains, from a recognisable layer out to a smeared cloud.
+
+There are no oscillators in Drone — it is your recordings, sustained.
 
 ## PCM samples
 
@@ -306,6 +308,8 @@ default PATH — see [CLAUDE.md](CLAUDE.md) for the exact invocation.
 - **Raspberry Pi Pico SDK** / RP2040 — Raspberry Pi Ltd.
 - The Kuramoto model — Yoshiki Kuramoto. Leaky integrate-and-fire and inhomogeneous
   Poisson processes are standard computational-neuroscience and point-process models.
+- **Sample library** — animal and environment recordings from
+  [**Pixabay**](https://pixabay.com), used under the Pixabay Content License.
 - BioMimicry for the Workshop Computer — **Andy Jenkinson** (**uglifruit**), 2026, with
   **Claude Code** (Anthropic).
 

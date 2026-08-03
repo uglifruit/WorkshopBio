@@ -48,6 +48,37 @@ static const int32_t kVariantPitch[kNumModes][kNumVariants] = {
 	{  65536,  69000,  62000,  72000,  67000,  59000,  75000,  64000 }
 };
 
+// --- PCM playback-rate variation -------------------------------------------
+//
+// Per-agent body size: a signed position in the spread, -1.0..+1.0 in Q15.
+// Fixed per agent so an animal keeps its identity — agent 0 is always the
+// biggest and deepest, agent 3 the smallest.
+static const int32_t kPcmAgentOffset[kNumAgents] = { -32768, 16384, -12000, 32767 };
+
+// Full pitch spread per mode, Q16, applied as +/- this much of the playback
+// rate. 3800 is about 1 semitone. A herd varies audibly; a field of cicadas
+// barely at all, because they are the same insect many times over.
+static const int32_t kPcmAgentSpread[kNumModes] = {
+	2600,   // Horses  — ~0.7 semitones, distinct animals but still all horses
+	4400,   // Geese   — birds differ noticeably in size
+	6600,   // Frogs   — different species in one pond
+	5100,   // Rain    — drip size varies with where it fell
+	8800,   // Meteors — distance, so the widest spread of all
+	1500    // Cicadas — near-uniform
+};
+
+// Extra per-EVENT jitter, Q16 peak deviation. Zero for Horses: a horse is one
+// animal and its clop must not change pitch hit to hit. For the crowd modes
+// this is what stops two overlapping calls fusing into one doubled sound.
+static const int32_t kPcmPerHit[kNumModes] = {
+	0,      // Horses  — MUST stay fixed; see above
+	1800,   // Geese
+	2400,   // Frogs
+	2000,   // Rain
+	3200,   // Meteors
+	1200    // Cicadas
+};
+
 // Stereo strategy per mode. The pan of a hit says something about the ecosystem:
 //   FIXED  — the agent always sits in the same place (a stable image; you are
 //            standing beside the animal and its legs do not move around you).
@@ -97,9 +128,15 @@ void VoiceBank::init(bool usePcm)
 		lastVariant_[i] = 0xFF;
 
 		DroneVoice &d = d_[i];
-		d.phase = 0; d.phase2 = 0; d.inc = 0; d.inc2 = 0;
-		d.pitch = kQ16One; d.level = 0; d.filt = 0; d.bright = 0;
-		d.noiseRng = 0x2468ACEu + static_cast<uint32_t>(i) * 40503u;
+		d.level = 0; d.density = 0; d.spread = 0;
+		d.countdown = 1 + i * 7;      // stagger so grains do not all start together
+		d.next = 0;
+		d.rng = 0x2468ACEu + static_cast<uint32_t>(i) * 40503u;
+		for (int k = 0; k < kNumGrains; k++)
+		{
+			d.g[k].pcm = nullptr; d.g[k].len = 0; d.g[k].pos = 0;
+			d.g[k].inc = 65536; d.g[k].level = 0; d.g[k].active = false;
+		}
 	}
 }
 
@@ -182,9 +219,32 @@ void VoiceBank::note(int i, Mode m, int32_t accent, int32_t variation,
 		v.pcm    = kModeSample[mi] + kModeSampleOff[mi][v.variant];
 		v.pcmLen = kModeSampleSize[mi][v.variant];
 		v.pcmPos = 0;
-		// Real recordings already differ from each other, so play them at pitch
-		// rather than stacking the synth's variant transposition on top.
-		v.pcmInc = 65536;
+
+		// Playback rate. Everything used to play at exactly 1:1, so four horses
+		// were byte-identical and a flock of geese was one goose repeated.
+		//
+		// The distinction that matters: an ANIMAL has a fixed size, so its rate
+		// must be constant every time it sounds — a horse whose clop changes
+		// pitch hit to hit is not one horse. A CROWD is many individuals, so
+		// there the variation is per-event.
+		int32_t rate = kQ16One;
+
+		// Per-agent body size: a fixed offset, so agent 2 is always the same
+		// animal. kPcmAgentOffset is +/-1.0 in Q15, so >>15 scales the mode's
+		// spread onto it.
+		rate += (kPcmAgentOffset[i] * kPcmAgentSpread[mi]) >> 15;
+
+		if (kPcmPerHit[mi])
+		{
+			// Crowd modes: an extra small random nudge per event, so two
+			// overlapping honks never fuse into one doubled sound.
+			int32_t j = rand_bipolar(rng_);                 // +/-16384
+			rate += (j * kPcmPerHit[mi]) >> 14;
+		}
+
+		if (rate < kQ16One / 4)  rate = kQ16One / 4;        // never below 0.25x
+		if (rate > kQ16One * 3)  rate = kQ16One * 3;        // never above 3x
+		v.pcmInc = static_cast<uint32_t>(rate);
 		return;
 	}
 
@@ -218,25 +278,51 @@ void VoiceBank::note(int i, Mode m, int32_t accent, int32_t variation,
 static const int32_t kPanCurveL[kNumAgents] = { 31000, 23000, 15000,  8000 };
 static const int32_t kPanCurveR[kNumAgents] = {  8000, 15000, 23000, 31000 };
 
-// Drone root pitches per mode, as 48kHz increments. Deliberately low and spread
-// so four agents make a chord rather than a cluster.
-static const uint32_t kDroneBase[kNumModes] = {
-	 5400000u,   // Horses  ~60Hz  — a low, heavy drone
-	 9800000u,   // Geese   ~110Hz — reedy
-	 7300000u,   // Frogs   ~82Hz  — the chorus
-	14600000u,   // Rain    ~165Hz — brighter, watery
-	 3600000u,   // Meteors ~40Hz  — subsonic rumble
-	21900000u    // Cicadas ~245Hz — high shimmer
+// How often each mode launches new grains, as control ticks between them at
+// minimum density. Denser modes overlap more heavily.
+// Chosen against the actual sample lengths so that grain duration divided by
+// launch interval lands near 2-3x — enough overlap for a seamless texture, but
+// within the kNumGrains slots. Ask for more overlap than there are slots and
+// grains get stolen mid-playback, which chops audibly.
+static const int32_t kGrainPeriod[kNumModes] = {
+	 130,   // Horses  — a herd on a road, hooves still individually audible
+	 150,   // Geese   — a constant agitated flock
+	 620,   // Frogs   — long calls, so they need room to breathe
+	  45,   // Rain    — steady downpour, near-continuous
+	2200,   // Meteors — very long swooshes; sparse launches, huge grains
+	  60    // Cicadas — a solid field of insects
 };
 
-// Per-agent interval, Q16 pitch multipliers. Root, fifth, octave, minor tenth —
-// a stack that stays consonant however many agents are active.
-static const int32_t kDroneInterval[kNumAgents] = { 65536, 98304, 131072, 157286 };
+// Playback-rate spread across grains, in 1/256ths. Wide spreads smear a
+// recording into texture; narrow ones keep it recognisable.
+static const int32_t kGrainSpread[kNumModes] = {
+	 72,   // Horses
+	 96,   // Geese
+	120,   // Frogs  — different species
+	110,   // Rain
+	140,   // Meteors — the most smeared, most abstract
+	 40    // Cicadas — near-uniform, it is one insect many times
+};
+
+// Base playback rate per mode, Q16. Below 65536 stretches the recording, which
+// is what turns a one-shot into a sustained layer.
+static const int32_t kGrainRate[kNumModes] = {
+	52000,   // Horses  — 0.79x, heavier animals
+	49000,   // Geese   — 0.75x, throatier
+	42000,   // Frogs   — 0.64x, deep pond
+	58000,   // Rain    — 0.88x, still watery
+	26000,   // Meteors — 0.40x, long and cavernous
+	61000    // Cicadas — 0.93x, close to natural
+};
 
 void VoiceBank::droneUpdate(Mode m, const int32_t *state, int32_t global,
                             uint8_t triggers, int active, int32_t timbre)
 {
 	int mi = static_cast<int>(m);
+
+	// With no samples baked in there is nothing to granulate, so Drone has
+	// nothing to do. (Rhythm still works; see kHaveSamples.)
+	if (!usePcm_) return;
 
 	for (int i = 0; i < kNumAgents; i++)
 	{
@@ -248,31 +334,64 @@ void VoiceBank::droneUpdate(Mode m, const int32_t *state, int32_t global,
 			d.level = slew(d.level, 0, 6);
 			continue;
 		}
+		d.level = slew(d.level, kQ16One, 6);
 
-		// The agent's own state bends its pitch by up to a fifth. This is the
-		// heart of the mode: whatever the engine is doing internally is now
-		// audible as continuous motion instead of as discrete hits.
-		int32_t bend = kQ16One + (state[i] >> 1);
-		int32_t target = mul_q16(kDroneInterval[i], bend);
-		d.pitch = slew(d.pitch, target, 5);
+		// Grain DENSITY comes from the ecosystem's global value plus this
+		// agent's own state, so each voice thickens and thins on its own while
+		// the whole texture still breathes together.
+		//
+		// Nothing is mapped to pitch. Most engines put a PHASE RAMP in state[],
+		// and mapping a ramp to pitch is exactly what made the old oscillator
+		// version sweep upward and snap back forever.
+		int32_t want = (global + state[i]) >> 1;
+		d.density = slew(d.density, want, 5);
 
-		// The whole-ecosystem value drives brightness, so the texture opens and
-		// closes with the global behaviour — density, agitation, coherence.
-		d.bright = slew(d.bright, global, 6);
+		// Knob Y widens the pitch spread across grains, from a tight recognisable
+		// layer out to a smeared cloud.
+		d.spread = timbre;
 
-		// A trigger is an accent, not a note: a small level bump on top of a
-		// tone that never stops.
-		int32_t lvlTarget = (kQ16One * 3) / 5;
-		if (triggers & (1 << i)) lvlTarget = kQ16One;
-		d.level = slew(d.level, lvlTarget, (triggers & (1 << i)) ? 2 : 7);
+		bool launch = (triggers & (1 << i)) != 0;
 
-		// Set the oscillator increments; droneRender advances the phases at
-		// audio rate. Knob Y detunes the pair, from a unison shimmer out to a
-		// wide slow beating.
-		uint32_t base = kDroneBase[mi];
-		d.inc = static_cast<uint32_t>(
-			(static_cast<int64_t>(base) * d.pitch) >> 16);
-		d.inc2 = d.inc + (d.inc >> 9) + static_cast<uint32_t>(timbre >> 6);
+		// Otherwise launch on a countdown that shortens as density rises.
+		if (--d.countdown <= 0)
+		{
+			launch = true;
+			// Density shortens the interval by up to 40%. It was 75%, which
+			// asked for far more overlap than there are grain slots — the
+			// round-robin then stole grains mid-playback and chopped audibly.
+			int32_t period = kGrainPeriod[mi];
+			period -= mul_q16(period * 2 / 5, d.density);
+			if (period < 8) period = 8;
+			// A little randomness so grains never lock into a machine pulse.
+			d.countdown = period + (static_cast<int32_t>(xorshift32(d.rng) % 32));
+		}
+
+		if (launch)
+		{
+			Grain &g = d.g[d.next];
+			d.next = static_cast<uint8_t>((d.next + 1) % kNumGrains);
+
+			// Pick any variant — in Drone the recordings are raw material, so
+			// the hoof/individual distinction does not apply.
+			uint8_t var = static_cast<uint8_t>(xorshift32(d.rng) & (kNumVariants - 1));
+			g.pcm = kModeSample[mi] + kModeSampleOff[mi][var];
+			g.len = kModeSampleSize[mi][var];
+
+			// Start somewhere inside the sample, not always at the attack —
+			// repeated attacks would read as a rhythm rather than a texture.
+			uint32_t startMax = (g.len > 16) ? (g.len >> 1) : 0;
+			g.pos = startMax ? ((xorshift32(d.rng) % startMax) << 16) : 0;
+
+			int32_t rate = kGrainRate[mi];
+			int32_t j = rand_bipolar(d.rng);                  // +/-16384
+			rate += (j * kGrainSpread[mi]) >> 12;
+			rate += (j * mul_q16(kGrainSpread[mi] << 2, d.spread)) >> 13;
+			if (rate < 4096) rate = 4096;                     // floor at 0.06x
+			g.inc = static_cast<uint32_t>(rate);
+
+			g.level = kQ16One;
+			g.active = true;
+		}
 	}
 }
 
@@ -283,31 +402,39 @@ void VoiceBank::droneRender(int active, int16_t &l, int16_t &r)
 	for (int i = 0; i < kNumAgents; i++)
 	{
 		DroneVoice &d = d_[i];
-		if (d.level <= 0 && i >= active) continue;
+		if (i >= active && d.level <= 0) continue;
 
-		// Two detuned saws through a one-pole opened by the ecosystem's global
-		// state. Saws rather than sines so the filter has something to work on.
-		// The oscillators are advanced here, at 48kHz — droneUpdate only sets
-		// the increments, at the 1.5kHz control rate.
-		d.phase  += d.inc;
-		d.phase2 += d.inc2;
-		int32_t a = static_cast<int32_t>(d.phase  >> 20) - 2048;
-		int32_t b = static_cast<int32_t>(d.phase2 >> 20) - 2048;
-		int32_t s = (a + b) >> 1;
+		int32_t mix = 0;
+		for (int k = 0; k < kNumGrains; k++)
+		{
+			Grain &g = d.g[k];
+			if (!g.active) continue;
 
-		// Brightness maps to filter shift 5 (dark) .. 1 (open).
-		int32_t k = 5 - (d.bright >> 14);
-		if (k < 1) k = 1;
-		if (k > 5) k = 5;
-		d.filt += (s - d.filt) >> k;
-		s = d.filt;
+			uint32_t idx = g.pos >> 16;
+			if (!g.pcm || idx >= g.len) { g.active = false; continue; }
 
-		s = mul_q16(s, d.level) >> 1;
+			int32_t mu = static_cast<int32_t>(g.pos & 0xFFFF);
+			int32_t a  = g.pcm[idx];
+			int32_t b  = (idx + 1 < g.len) ? g.pcm[idx + 1] : 0;
+			int32_t s  = (a + (((b - a) * mu) >> 16)) << 4;   // 8-bit -> 12-bit
 
-		// Drones sit at fixed positions, spread wide — the point is a stable
-		// stereo image you can sit inside, not movement.
-		accL += mul_q15(s, kPanCurveL[i]);
-		accR += mul_q15(s, kPanCurveR[i]);
+			// Window the grain: fade in and out across its length so overlapping
+			// copies cross-fade instead of clicking at their edges. Triangular,
+			// which is cheap and good enough at this density.
+			uint32_t half = g.len >> 1;
+			uint32_t dist = (idx < half) ? idx : (g.len - 1 - idx);
+			int32_t win = half ? static_cast<int32_t>((dist << 16) / half) : 0;
+			if (win > kQ16One) win = kQ16One;
+
+			mix += mul_q16(s, win) >> 1;
+			g.pos += g.inc;
+		}
+
+		mix = mul_q16(mix, d.level);
+
+		// Fixed wide positions: the point is a stable image you can sit inside.
+		accL += mul_q15(mix, kPanCurveL[i]);
+		accR += mul_q15(mix, kPanCurveR[i]);
 	}
 
 	l = clamp12(accL);
