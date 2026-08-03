@@ -2,17 +2,15 @@
 
 **A generative stochastic rhythm card born under the dark skies of rural Wales.**
 
-Modular synthesis often traps us in rigid, Euclidean grids. BioMimicry breaks that grid
-by using **six distinct mathematical physics engines** to generate triggers, CV and audio
-that feel unmistakably alive.
+BioMimicry uses **six distinct mathematical physics engines** to generate triggers, CV and
+audio that feel organically alive.
 
-It was built to capture the semi-random behaviours of the natural world: the polyrhythmic
-clopping of horses on a road, the cascading panic of a flock of geese, the rushing
-accumulator of a waterfall walk, and the sudden silent clustering of a meteor shower
-overhead. *(We added the frogs later — there weren't any on the farm, but the swamp
-mathematics were too good to leave out.)*
+It was built to capture the semi-random behaviours of the natural world: the polyrhythmic clopping of horses on a road, the cascading panic of a flock of geese, the rushing
+accumulator of a waterfall walk, and the sudden silent clustering of a meteor shower overhead.
 
-Runs on a real Music Thing Modular Workshop System Computer. Built on the RP2040 with
+*I didn't hear frogs, but the swamp mathematics were too good to leave out.*
+
+Runs on a Music Thing Modular Workshop System Computer. Built on the RP2040 with
 [ComputerCard](https://github.com/TomWhitwell/Workshop_Computer).
 
 > **v1.0.0** — six ecosystems, two boot modes, a full library of real animal
@@ -41,8 +39,7 @@ Tap the momentary switch (Down) to cycle habitats. Each has its own internal log
 
 ### The gaits are real
 
-Horses mode isn't four clocks approximating a rhythm — it's one stride clock with
-each hoof landing at its correct point in the stride:
+Horses mode is clocked with each hoof landing at its correct point in the stride:
 
 | Gait | Footfall (fraction of stride) | Suspension |
 |---|---|---|
@@ -53,7 +50,7 @@ each hoof landing at its correct point in the stride:
 
 Because each horse's four hooves share one stride clock, its gait *holds together*
 however long it runs; Knob Y jitters each hoof's timing without breaking the pattern.
-Knob X adds **whole horses**, never partial ones — a three-legged horse is not a
+Knob X adds **whole horses**, never partial ones; a three-legged horse is not a
 smaller herd. Each animal runs slightly off its neighbours' pace, so the herd phases
 continuously. `python tools/simulate.py gaits` verifies the footfalls biomechanically.
 
@@ -367,4 +364,3 @@ Two things in this repository are not mine to relicense and keep their own terms
 | [`samples/*.raw`](samples/) | Recordings from [Pixabay](https://pixabay.com), under the Pixabay Content License — see [samples/README.md](samples/README.md) |
 | `ComputerCard.h` | The Music Thing card library by Chris Johnson, MIT |
 
-*Step away from the grid and let the ecosystem run.*

@@ -23,12 +23,12 @@ tags:
   - drums
   - swarm
   - granular
+  - organic
   - sample-player
 
 summary: |
-  Modular synthesis often traps us in rigid, Euclidean grids. BioMimicry breaks
-  that grid with six mathematical physics engines that generate triggers, CV and
-  audio which feel unmistakably alive.
+  BioMimicry uses six mathematical physics engines to generate triggers, CV and
+  audio that feel organically alive.
 
   Tap the momentary switch to cycle six ecosystems. HORSES: a herd, each animal
   running its own stride clock driving four hooves at their real equine footfall
@@ -42,8 +42,8 @@ summary: |
   eerie silence into dense overlapping barrages. CICADAS: four patches of insects
   coupled on loudness rather than on phase or events, swelling out of step.
 
-  Voices are real animal recordings with up to eight round robins each. In Horses
-  the round robins are the four HOOVES, so a gait sounds like an animal rather
+  Voices are animal recordings with up to eight round robins each. In Horses
+  the round robins are the four hooves, so a gait sounds like an animal rather
   than a drum machine.
 
   Hold the momentary switch at power-on to boot DRONE, which granulates the same
@@ -51,8 +51,6 @@ summary: |
 
   Samples can be replaced from a browser over USB - see the editor link - with no
   rebuild and no toolchain.
-
-  Step away from the grid and let the ecosystem run.
 
 panel:
   inputs:
