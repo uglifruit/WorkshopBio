@@ -39,6 +39,7 @@ Options:
     --no-trim      skip silence trimming
 """
 import array
+import math
 import os
 import struct
 import sys
@@ -48,7 +49,18 @@ SR = 48000
 IN_DIR = os.path.join("samples", "incoming")
 OUT_DIR = "samples"
 MODES = ["horses", "geese", "frogs", "rain", "meteors", "cicadas"]
+NUM_VARIANTS = 8          # must match kNumVariants in voices.h
 WARN_MS = 1000
+
+# Sample libraries are named after the animal, not the mode. Accept both.
+ALIASES = {
+    "horse": "horses", "hoof": "horses", "clop": "horses",
+    "goose": "geese", "honk": "geese",
+    "frog": "frogs", "ribbit": "frogs", "toad": "frogs",
+    "drip": "rain", "water": "rain", "droplet": "rain",
+    "whoosh": "meteors", "swoosh": "meteors", "meteor": "meteors",
+    "cicada": "cicadas", "cricket": "cicadas", "insect": "cicadas",
+}
 
 
 def decode(raw, width, nch):
@@ -141,6 +153,43 @@ def trim(data, floor=0.004):
     return data[start:end] if end > start else data
 
 
+def rms(data):
+    if not data:
+        return 0.0
+    return (sum(v * v for v in data) / len(data)) ** 0.5
+
+
+def loudness_match(data, target_rms, ceiling=0.94):
+    """Match PERCEIVED loudness, then tame whatever peaks that produces.
+
+    Peak normalisation is the obvious thing and it does not work here: a sample's
+    peak is usually a single transient, so two recordings normalised to the same
+    peak can still differ hugely in how loud they sound. A honk whose body sits
+    at RMS 0.004 and one at 0.059 both peak near 1.0 and sound nothing alike.
+
+    So: scale by RMS to equalise the bodies, then soft-limit the result. The
+    limiter is a smooth tanh-ish curve rather than a hard clip, applied only to
+    the part above the knee, so transients round over instead of squaring off.
+    """
+    r = rms(data)
+    if r < 1e-9:
+        return data
+    g = target_rms / r
+    out = [v * g for v in data]
+
+    knee = ceiling * 0.7
+    limited = []
+    for v in out:
+        a = abs(v)
+        if a > knee:
+            over = (a - knee) / (1.0 - knee) if knee < 1.0 else 0.0
+            # x/(1+x) compresses [0,inf) into [0,1) smoothly.
+            a = knee + (ceiling - knee) * (over / (1.0 + over))
+            v = a if v >= 0 else -a
+        limited.append(v)
+    return limited
+
+
 def normalise(data, target=0.92):
     peak = max((abs(v) for v in data), default=0.0)
     if peak < 1e-6:
@@ -167,52 +216,103 @@ def write_raw(name, data):
     return path, len(out)
 
 
+def resolve_mode(stem):
+    """Map a source filename onto one of the card's mode names.
+
+    Sample libraries are named after the animal, not after the mode, so
+    HORSE_3.wav and WHOOSH_2.wav need to land in horses_ and meteors_.
+    """
+    head = stem.split("_")[0].lower()
+    if head in MODES:
+        return head
+    return ALIASES.get(head)
+
+
 def main():
     keep_level = "--keep-level" in sys.argv
     no_trim = "--no-trim" in sys.argv
 
-    if not os.path.isdir(IN_DIR):
+    # Source directory: samples/incoming by default, or any folder given as a
+    # bare argument (e.g. AnimalSFX).
+    src = IN_DIR
+    for a in sys.argv[1:]:
+        if not a.startswith("--"):
+            src = a
+            break
+
+    if not os.path.isdir(src):
         os.makedirs(IN_DIR, exist_ok=True)
-        print(f"Created {IN_DIR}/ — put your .wav files there and re-run.")
-        print(__doc__)
+        print(f"No such directory: {src}")
+        print(f"Put .wav files in {IN_DIR}/ (or pass a folder) and re-run.")
         return
 
-    wavs = sorted(f for f in os.listdir(IN_DIR) if f.lower().endswith(".wav"))
+    wavs = sorted(f for f in os.listdir(src) if f.lower().endswith(".wav"))
     if not wavs:
-        print(f"No .wav files in {IN_DIR}/")
+        print(f"No .wav files in {src}/")
         print(__doc__)
         return
 
-    os.makedirs(OUT_DIR, exist_ok=True)
-    total = 0
+    # --- Pass 1: read everything and measure it. ---
+    loaded = {}          # mode -> list of (filename, samples, desc)
     unknown = []
     for fn in wavs:
-        stem = os.path.splitext(fn)[0].lower()
-        mode = stem.split("_")[0]
-        if mode not in MODES:
+        stem = os.path.splitext(fn)[0]
+        mode = resolve_mode(stem)
+        if mode is None:
             unknown.append(fn)
             continue
-
-        data, desc = read_wav(os.path.join(IN_DIR, fn))
+        data, desc = read_wav(os.path.join(src, fn))
         if not no_trim:
             data = trim(data)
-        if not keep_level:
-            data = normalise(data)
-        data = fade_out(data)
+        loaded.setdefault(mode, []).append((fn, data, desc))
 
-        path, n = write_raw(stem, data)
-        total += n
-        ms = n / 48.0
-        flag = "  <-- long, consider trimming" if ms > WARN_MS else ""
-        print(f"  {fn:<22} {desc:<22} -> {os.path.basename(path):<16} "
-              f"{ms:5.0f}ms{flag}")
+    if not loaded:
+        print("Nothing recognised. Names must start with a mode or animal:")
+        print(f"  modes:   {', '.join(MODES)}")
+        print(f"  aliases: {', '.join(sorted(ALIASES))}")
+        return
+
+    # A single loudness target across the whole library, so switching modes on
+    # the card does not jump in level. The median of all sources keeps that
+    # target near the material rather than pinned to the loudest outlier.
+    all_rms = sorted(rms(d) for lst in loaded.values() for _, d, _ in lst)
+    target = all_rms[len(all_rms) // 2] if all_rms else 0.1
+    # Lift quiet libraries so the card is not needlessly timid, but never so far
+    # that the limiter is doing all the work.
+    target = max(target, 0.06)
+    if not keep_level:
+        print(f"Loudness target: RMS {target:.4f} "
+              f"(median of {len(all_rms)} sources)\n")
+
+    # --- Pass 2: level, fade, write. ---
+    os.makedirs(OUT_DIR, exist_ok=True)
+    total = 0
+    for mode in MODES:
+        if mode not in loaded:
+            continue
+        items = loaded[mode]
+        if len(items) > NUM_VARIANTS:
+            print(f"  {mode}: {len(items)} sources, using the first "
+                  f"{NUM_VARIANTS}")
+            items = items[:NUM_VARIANTS]
+        for v, (fn, data, desc) in enumerate(items, start=1):
+            before = rms(data)
+            out = data if keep_level else loudness_match(data, target)
+            out = fade_out(list(out))
+            path, n = write_raw(f"{mode}_{v}", out)
+            total += n
+            ms = n / 48.0
+            gain_db = 20 * math.log10(max(rms(out), 1e-9) / max(before, 1e-9))
+            flag = "  <-- long" if ms > WARN_MS else ""
+            print(f"  {fn:<18} -> {mode}_{v:<10} {ms:5.0f}ms "
+                  f"{gain_db:+6.1f}dB{flag}")
 
     for fn in unknown:
-        print(f"  {fn}: SKIPPED — name must start with one of {MODES}")
+        print(f"  {fn}: SKIPPED — unrecognised name")
 
-    print(f"\nWrote {total} bytes ({total / 48000.0:.2f}s). "
-          f"Flash holds about 41s in total.")
-    print("Now rebuild: cmake --build build")
+    print(f"\nWrote {total} bytes ({total / 48000.0:.2f}s) into {OUT_DIR}/. "
+          f"Flash holds about 41s.")
+    print("Now rebuild:  cmake --build build")
 
 
 if __name__ == "__main__":

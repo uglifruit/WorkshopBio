@@ -7,15 +7,16 @@ Usage:
 Expects 8-bit SIGNED mono raw at 48kHz, named per mode with an optional variant
 number for round robins:
 
-    horses_1.raw  horses_2.raw  horses_3.raw  horses_4.raw
-    geese_1.raw   ...  frogs_N.raw  rain_N.raw  meteors_N.raw  cicadas_N.raw
+    horses_1.raw .. horses_4.raw      (four: one per hoof)
+    geese_1.raw  .. geese_8.raw       (up to eight round robins)
+    frogs_N.raw  rain_N.raw  meteors_N.raw  cicadas_N.raw
 
 A bare `horses.raw` (no number) is accepted and used for all four variants, so
 a single recording per mode still works.
 
 VARIANTS ARE NOT DECORATION. The firmware asks for a specific variant and in
 Horses that variant IS THE HOOF: 1=left hind, 2=left fore, 3=right hind,
-4=right fore. Hind hooves on a real animal strike lower and heavier than fores,
+4=right fore (Horses uses only the first four slots). Hind hooves on a real animal strike lower and heavier than fores,
 so record or order them accordingly — that front/back difference is most of what
 makes a gait sound like an animal rather than a drum machine. In the other modes
 the variants are simply different individuals (birds, species, drip sizes,
@@ -31,27 +32,37 @@ Emits, for each mode, a flat concatenated array plus per-variant offsets:
 Converting a wav with ffmpeg:
     ffmpeg -i clop_lh.wav -ac 1 -ar 48000 -f s8 samples/horses_1.raw
 
-Flash budget: 2MB total, ~100KB used by code. At 48kHz 8-bit, 1 second = 48KB,
-so roughly 40 seconds of audio fits in total — about 1.6s per variant across all
-six modes at four variants each. These are one-shots; keep them short.
+Flash budget: 2MB total, ~107KB used by code, so roughly 41 seconds of 48kHz
+8-bit mono fits. A full eight-variant library of one-shots comes to well under
+half of that. These are one-shots; keep them short.
 """
 import os
 import sys
 
 MODES = ["horses", "geese", "frogs", "rain", "meteors", "cicadas"]
-NUM_VARIANTS = 4          # must match kNumVariants in voices.h
+NUM_VARIANTS = 8          # must match kNumVariants in voices.h
+HOOF_VARIANTS = 4         # must match kHoofVariants: Horses = one per hoof
 
 
 def load_variants(sample_dir, mode):
-    """Return NUM_VARIANTS byte strings for a mode, padding by reuse."""
+    """Return NUM_VARIANTS byte strings for a mode, padding by reuse.
+
+    Padding reuses the SAME object rather than a copy, so emit() can spot the
+    repeat and point both slots at one copy in flash.
+    """
+    # Horses' variants are the four hooves, not alternates; it never asks for
+    # a slot above the fourth.
+    limit = HOOF_VARIANTS if mode == "horses" else NUM_VARIANTS
+
     found = []
-    for v in range(1, NUM_VARIANTS + 1):
+    for v in range(1, limit + 1):
         path = os.path.join(sample_dir, f"{mode}_{v}.raw")
         if os.path.isfile(path):
             with open(path, "rb") as f:
                 found.append(f.read())
         else:
             found.append(None)
+    found += [None] * (NUM_VARIANTS - limit)
 
     # Fall back to an unnumbered file for any variant with no recording.
     plain_path = os.path.join(sample_dir, f"{mode}.raw")
@@ -77,12 +88,22 @@ def load_variants(sample_dir, mode):
 
 
 def emit(name, variants):
-    blob = b"".join(variants)
-    offsets, sizes, pos = [], [], 0
+    """Concatenate the distinct recordings once, and point repeated variants at
+    the copy already in flash. Horses only ever uses four slots (its variants
+    are the hooves) and a mode with five recordings pads to eight, so storing
+    the padding again would waste a quarter of a megabyte for nothing."""
+    blob = bytearray()
+    seen = {}                       # id of the bytes object -> (offset, size)
+    offsets, sizes = [], []
     for v in variants:
-        offsets.append(pos)
-        sizes.append(len(v))
-        pos += len(v)
+        key = id(v)
+        if key not in seen:
+            seen[key] = (len(blob), len(v))
+            blob += v
+        off, size = seen[key]
+        offsets.append(off)
+        sizes.append(size)
+    blob = bytes(blob)
 
     # Explicitly uint32_t: on the arm-none-eabi ABI uint32_t is `unsigned long`,
     # so arrays declared `unsigned` produce pointers that will not convert.

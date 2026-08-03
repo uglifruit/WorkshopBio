@@ -29,22 +29,23 @@ static const uint32_t kBaseInc[kNumModes] = {
 	340000000u   // Cicadas ~3.8kHz stridulation
 };
 
-// Round-robin pitch offsets, Q16. In Horses these are the four hooves (hinds
-// heavier and lower than fores); elsewhere they are simply four individuals.
+// Round-robin pitch offsets, Q16, used by the SYNTH voices — real recordings
+// already differ from each other and are played at pitch. In Horses the first
+// four are the hooves (hinds heavier and lower than fores); elsewhere they are
+// simply individuals.
 static const int32_t kVariantPitch[kNumModes][kNumVariants] = {
-	// Horses: LH, LF, RH, RF. Hind hooves strike lower and heavier than fores,
-	// so the gait has an audible front/back shape, not just left/right.
-	{  56000,  74000,  60000,  79000 },
-	// Geese: four birds of different size.
-	{  65536,  52000,  78000,  44000 },
-	// Frogs: four species in the chorus.
-	{  65536,  49000,  88000,  61000 },
-	// Rain: four drip sizes.
-	{  65536,  81000,  53000,  92000 },
-	// Meteors: four distances.
-	{  65536,  48000,  86000,  57000 },
-	// Cicadas: four insects, tight spread — a real field is fairly uniform.
-	{  65536,  69000,  62000,  72000 }
+	// Horses: LH, LF, RH, RF, then repeats — only the first four are ever used.
+	{  56000,  74000,  60000,  79000,  56000,  74000,  60000,  79000 },
+	// Geese: birds of different size.
+	{  65536,  52000,  78000,  44000,  71000,  48000,  85000,  58000 },
+	// Frogs: species in the chorus.
+	{  65536,  49000,  88000,  61000,  55000,  75000,  42000,  95000 },
+	// Rain: drip sizes.
+	{  65536,  81000,  53000,  92000,  70000,  59000, 104000,  47000 },
+	// Meteors: distances.
+	{  65536,  48000,  86000,  57000,  72000,  41000,  95000,  63000 },
+	// Cicadas: a tight spread — a real field is fairly uniform.
+	{  65536,  69000,  62000,  72000,  67000,  59000,  75000,  64000 }
 };
 
 // Stereo strategy per mode. The pan of a hit says something about the ecosystem:
@@ -111,7 +112,7 @@ void VoiceBank::selectVariantAndPan(Voice &v, int agent, Mode m, uint8_t member)
 		// The variant IS the hoof that landed, reported by the engine. A gait
 		// only sounds like an animal when each leg has its own voice — and with
 		// a herd, each horse plays all four of its own hooves.
-		v.variant = static_cast<uint8_t>(member & (kNumVariants - 1));
+		v.variant = static_cast<uint8_t>(member % kHoofVariants);
 	}
 	else
 	{
@@ -134,8 +135,8 @@ void VoiceBank::selectVariantAndPan(Voice &v, int agent, Mode m, uint8_t member)
 		setPan(v, 2 + agent * 4 + ((v.variant & 1) ? 1 : -1));
 		break;
 	case PanMode::Spread:
-		// Agent's spot, offset by which swarm member this is, so the twelve
-		// birds occupy twelve places rather than four.
+		// Agent's spot, nudged by which individual this is, so the members of a
+		// flock occupy their own places rather than stacking up.
 		setPan(v, 1 + agent * 4 + (v.variant & 3));
 		break;
 	case PanMode::Random:

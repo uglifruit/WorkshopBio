@@ -181,24 +181,31 @@ Sample playback is a **build-time** choice, not a boot mode: bake recordings int
 `samples/` and they replace the synthesized voices in Rhythm boot. With no `samples/`
 directory the firmware still builds and uses synthesis.
 
-Each mode takes **four round-robin recordings**, and the variants are not decoration.
+Each mode takes up to **eight round-robin recordings**, and the variants are not decoration.
 
-Drop WAV files into `samples/incoming/` and run the importer:
+Drop WAV files into `samples/incoming/` (or any folder) and run the importer:
 
 ```sh
-python tools/importwav.py
+python tools/importwav.py AnimalSFX
 ```
 
 It accepts **any sample rate, mono or stereo, 8/16/24/32-bit or float**, and converts to
-the 8-bit signed mono 48 kHz `.raw` the build bakes in — resampling, summing to mono,
-trimming silence, normalising and applying a short fade-out. Standard library only, no
-ffmpeg needed.
+the 8-bit signed mono 48 kHz `.raw` the build bakes in — resampling, summing to mono and
+trimming silence. Standard library only, no ffmpeg needed.
 
-Name them `mode_variant.wav`:
+**It also matches loudness across the whole library.** Sample packs are typically all
+over the place; the importer measures every source and scales each to a common RMS, then
+soft-limits the result. RMS rather than peak, because a sample's peak is usually a single
+transient — two recordings peak-normalised to the same ceiling can still sound nothing
+alike. A real pack needed corrections from **-15 dB to +21 dB**, and came out matched to
+1.07x with no clipping.
+
+Name them `mode_variant.wav`, or use common animal names (`HORSE_1.wav`, `GOOSE_3.wav`,
+`WHOOSH_2.wav`, `DRIP_5.wav`, `CICADA_8.wav`) — the importer maps those onto modes:
 
 ```
-horses_1.wav  horses_2.wav  horses_3.wav  horses_4.wav
-geese_1.wav   frogs_1.wav   rain_1.wav    meteors_1.wav   cicadas_1.wav
+horses_1..4    (four: the hooves)
+geese_1..8   frogs_1..8   rain_1..8   meteors_1..8   cicadas_1..8
 ```
 
 **`horses_1..4` are LH, LF, RH, RF** — left hind, left fore, right hind, right fore. The
@@ -207,8 +214,9 @@ than fores on a real animal, so putting them in the right slots is most of what 
 gait sound like an animal. For the other modes the four are simply different individuals,
 picked at random with no immediate repeat.
 
-Fewer than four is fine: missing variants reuse whichever you supplied, and a bare
-`horses.wav` with no number is used for all four.
+Fewer is fine: missing variants reuse whichever you supplied — and the baker points the
+repeats at one copy in flash rather than storing it twice. A bare `horses.wav` with no
+number covers every slot.
 
 **What makes a good source:** a single isolated hit, trimmed tight to the transient (the
 attack is what identifies the sound), and **dry** — the card has no reverb, so any

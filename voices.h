@@ -13,9 +13,16 @@
 
 namespace bio {
 
-/// Variants per mode. Four covers one-per-hoof in Horses, which is the case
-/// that most needs it; the flock modes cycle through them for variety.
-constexpr int kNumVariants = 4;
+/// Round-robin variants per mode. Eight, because with a flock of twelve geese
+/// four recordings repeat audibly — and flash is not the constraint (the full
+/// sample set is ~834KB of ~1.9MB free).
+///
+/// HORSES is the exception: its variants are the four HOOVES, not arbitrary
+/// alternates, so it only ever uses the first four slots. See kHoofVariants.
+constexpr int kNumVariants = 8;
+
+/// Horses uses exactly one variant per hoof (LH, LF, RH, RF).
+constexpr int kHoofVariants = 4;
 
 /// One polyphonic slot, owned by one agent.
 struct Voice
