@@ -50,6 +50,14 @@ enum class Routing : uint8_t
 	Summed    // Switch Middle: agents OR'd -> Pulse 1, CV outs carry state
 };
 
+/// Chosen by holding the momentary switch at power-on. Same six engines, two
+/// completely different instruments made out of them.
+enum class BootMode : uint8_t
+{
+	Rhythm,   // normal: the physics fire discrete triggers and one-shot voices
+	Drone     // alt:    the physics drive continuous tone, an ambient counterpart
+};
+
 /// Control state, resampled once per control tick and handed to the engine.
 /// All the Q16 fields are 0..65536.
 struct Ctrl
@@ -62,6 +70,9 @@ struct Ctrl
 	int32_t clockPeriod; // control ticks between the last two Pulse In 2 edges,
 	                     // 0 if no clock is running. Lets an engine entrain to
 	                     // an external tempo rather than just being nudged.
+	int32_t loudness;    // Q16 envelope of Audio In 1: how loud the room is.
+	                     // A disturbed environment - it quietens the shy modes
+	                     // and agitates the reactive ones. 0 when unpatched.
 };
 
 /// What an engine produces each control tick.

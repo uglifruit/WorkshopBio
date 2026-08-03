@@ -15,6 +15,7 @@
 #include "biomimicry.h"
 #include "engines.h"
 #include "voices.h"
+#include "samples_default.h"   // kHaveSamples
 
 using namespace bio;
 
@@ -50,7 +51,12 @@ public:
 			if (SwitchVal() == Switch::Down) bootHeldDown_ = true;
 			if (++bootPhase_ == kBootWindowSamples)
 			{
-				voices_.init(bootHeldDown_);
+				// Holding the switch at power-on picks DRONE, a different
+				// instrument built from the same six engines. PCM sample
+				// playback is a build-time choice now (bake samples/ or don't),
+				// not something worth spending a whole boot mode on.
+				boot_ = bootHeldDown_ ? BootMode::Drone : BootMode::Rhythm;
+				voices_.init(kHaveSamples);
 				engines_[mode_]->reset(0xB10Du);
 				// Swallow the release of the boot hold.
 				switchArmed_ = (SwitchVal() != Switch::Down);
@@ -67,9 +73,13 @@ public:
 
 		// ---- Audio (48kHz) ----------------------------------------------
 		int16_t l, r;
-		voices_.render(population_, l, r);
+		if (boot_ == BootMode::Drone) voices_.droneRender(population_, l, r);
+		else                          voices_.render(population_, l, r);
 		AudioOut1(l);
 		AudioOut2(r);
+
+		// ---- Listening (48kHz) ------------------------------------------
+		listen();
 
 		// ---- Gate/blip timers (48kHz) -----------------------------------
 		serviceOutputs();
@@ -125,11 +135,15 @@ private:
 		c.population  = 1 + (popRaw * kNumAgents - 1) / kQ16One;
 		if (c.population < 1) c.population = 1;
 		if (c.population > kNumAgents) c.population = kNumAgents;
-		c.spook       = spookPending_;
+		// A sharp transient on Audio In 2 counts as a spook, so the ecosystem
+		// reacts to the rest of the patch and not only to a patched gate.
+		c.spook       = spookPending_ || startle_;
 		c.clock       = clockPending_;
 		c.clockPeriod = clockPeriod_;
+		c.loudness    = loudness_;
 		spookPending_ = false;
 		clockPending_ = false;
+		startle_      = false;
 		population_   = c.population;
 
 		// --- Physics. ---
@@ -144,9 +158,17 @@ private:
 
 		// --- Voices. ---
 		Mode m = static_cast<Mode>(mode_);
-		for (int i = 0; i < kNumAgents; i++)
-			if (mask & (1 << i))
-				voices_.note(i, m, kQ16One, out.state[i], out.member[i]);
+		if (boot_ == BootMode::Drone)
+		{
+			voices_.droneUpdate(m, out.state, out.global, mask, c.population,
+			                    c.chaos);
+		}
+		else
+		{
+			for (int i = 0; i < kNumAgents; i++)
+				if (mask & (1 << i))
+					voices_.note(i, m, kQ16One, out.state[i], out.member[i]);
+		}
 
 		// --- Trigger outputs. ---
 		if (routing_ == Routing::Discrete)
@@ -190,6 +212,40 @@ private:
 		}
 
 		seed_ = seed_ * 1664525u + 1013904223u;
+	}
+
+	// -------------------------------------------------------------------
+	// 48kHz: the ecosystem listens to the rest of the patch.
+	//
+	// Audio In 1 is LOUDNESS — a fast envelope follower. A loud room is a
+	// disturbed one: it spooks the geese, silences the cicadas and startles the
+	// herd. Audio In 2 is DISTURBANCE — the same signal differentiated, so it
+	// responds to transients rather than level, which is what actually alarms an
+	// animal. Both only act when something is patched in.
+	void listen()
+	{
+		if (Connected(Input::Audio1))
+		{
+			int32_t a = AudioIn1();
+			if (a < 0) a = -a;
+			// Fast attack, slow release: an envelope that tracks how alive the
+			// room is rather than the waveform itself.
+			if (a > loudness_) loudness_ = slew(loudness_, a << 4, 3);
+			else               loudness_ = slew(loudness_, a << 4, 9);
+			if (loudness_ > kQ16One) loudness_ = kQ16One;
+		}
+		else loudness_ = 0;
+
+		if (Connected(Input::Audio2))
+		{
+			int32_t a = AudioIn2();
+			int32_t d = a - lastAudio2_;
+			lastAudio2_ = a;
+			if (d < 0) d = -d;
+			// A sharp transient arms a startle that the control tick consumes.
+			if ((d << 4) > kQ16One / 3) startle_ = true;
+		}
+		else lastAudio2_ = 0;
 	}
 
 	// -------------------------------------------------------------------
@@ -264,6 +320,10 @@ private:
 	bool     clockPending_ = false;
 	int32_t  clockPeriod_  = 0;   // control ticks between Pulse In 2 edges
 	int32_t  clockAge_     = 0;   // ticks since the last edge
+	int32_t  loudness_     = 0;   // Q16 envelope of Audio In 1
+	int32_t  lastAudio2_   = 0;
+	bool     startle_      = false;
+	BootMode boot_         = BootMode::Rhythm;
 	int32_t  activity_   = 0;
 	uint32_t seed_       = 0xC0FFEEu;
 

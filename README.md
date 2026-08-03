@@ -57,7 +57,7 @@ continuously. `python tools/simulate.py gaits` verifies the footfalls biomechani
 | **Knob Main** | **The Physics** — the fundamental law of the current ecosystem (Gait & tempo · Contagion · Decoupling · Downpour · Debris density) |
 | **Knob X** | **Population** — how many agents are alive: **horses in the herd**, birds in the flock, frogs in the pond, buckets on the leaf, meteors in the sky, insects in the field |
 | **Knob Y** | **Chaos / Humanize** — per-mode randomness and spread (timing jitter, spark rate, frequency spread, threshold variance, LFO wander) |
-| **Switch Down** (momentary) | **Tap to cycle** the ecosystem. **Hold at power-on** to boot the PCM sample voices. |
+| **Switch Down** (momentary) | **Tap to cycle** the ecosystem. **Hold at power-on** to boot **Drone** mode instead of Rhythm. |
 | **Switch Up** | Routing: **Discrete** |
 | **Switch Middle** | Routing: **Summed / CV** |
 
@@ -91,6 +91,10 @@ continuously. `python tools/simulate.py gaits` verifies the footfalls biomechani
 | **Pulse In 2** | **The Clock** — an external tempo the ecosystem *entrains to* rather than obeys. Frogs treat it as a phantom frog in the pond and couple to it with whatever strength Knob Main is set to, so you can dial anywhere from locked-to-the-clock to completely indifferent. Horses lock their stride to it. Geese lean their honks toward the beat; Rain tops up every bucket so the nearest tips on the beat; Meteors swell the debris field. Stop the clock and the ecosystem drifts back to its own timing within ~3 seconds. |
 | **CV In 1** | Modulates **Knob Main** (the physics variable) |
 | **CV In 2** | Modulates **Knob X** (population) |
+| **Audio In 1** | **Loudness** — the ecosystem hears the rest of your patch. A loud room agitates the geese into honking and shuts the cicadas up; the shy modes thin out as the patch gets busy and fill back in when it quietens. |
+| **Audio In 2** | **Disturbance** — transient-sensitive rather than level-sensitive, because it is sudden movement that alarms an animal, not steady noise. A sharp attack counts as a Spook. |
+
+Both audio inputs only act when something is patched in.
 
 ## Outputs
 
@@ -156,21 +160,43 @@ Panning comes from the ecosystem, not from a knob:
   birds occupy twelve positions and a cascade sweeps across the field.
 - **Random** (Rain, Meteors) — each hit lands somewhere new, because each is a new object.
 
-**Alt boot (hold the momentary switch Down at power-on) — PCM.** Plays baked-in samples
-from flash instead. The repo ships procedural placeholders; drop real recordings into
-`samples/` and rebuild:
+## Two instruments: Rhythm and Drone
+
+Hold the momentary switch **Down at power-on** to boot **DRONE** instead of the normal
+**RHYTHM** card. Same six engines, completely different instrument.
+
+In Drone, nothing fires one-shots. Each agent's continuous engine state bends a sustained
+tone instead: a horse's stride becomes a slow pitch sweep, a bucket's fill level a rising
+drone, the frogs' phase coherence a chorus that thickens as they lock and scatters as they
+don't. The whole-ecosystem value opens and closes a filter across all four voices, so the
+texture breathes with the global behaviour. Triggers survive only as small accents —
+events colour the texture rather than punctuating it. Knob Y detunes the oscillator pairs
+from a unison shimmer out to wide slow beating.
+
+It is an ambient counterpart to the rhythm card, made from exactly the same physics.
+
+## PCM samples
+
+Sample playback is a **build-time** choice, not a boot mode: bake recordings into
+`samples/` and they replace the synthesized voices in Rhythm boot. With no `samples/`
+directory the firmware still builds and uses synthesis.
+
+Each mode takes **four round-robin recordings**, and the variants are not decoration:
 
 ```sh
-ffmpeg -i clop.wav -ac 1 -ar 48000 -f s8 samples/horses.raw
+ffmpeg -i clop_left_hind.wav -ac 1 -ar 48000 -f s8 samples/horses_1.raw
 ```
 
-Expected files: `horses.raw` `geese.raw` `frogs.raw` `rain.raw` `meteors.raw`
-`cicadas.raw` (8-bit signed mono, 48 kHz). If `samples/` is absent the firmware still
-builds and alt-boot falls back to the synthesized voices.
+`horses_1..4` are **LH, LF, RH, RF** — the firmware asks for the hoof that actually
+landed. Hind hooves strike lower and heavier than fores on a real animal, so ordering
+them correctly is most of what makes a gait sound like an animal. For the other modes the
+four are simply different individuals, picked at random with no immediate repeat.
 
-There is room for far more: code is ~100 KB of the 2 MB flash, leaving **~40 seconds** of
-48 kHz mono PCM — enough for eight distinct round-robin recordings per mode at a second
-each. The variant system is already wired for it.
+A bare `horses.raw` with no number still works and is used for all four variants.
+`python tools/gensamples.py` writes procedural placeholders in the right layout.
+
+Budget: code is ~107 KB of the 2 MB flash, so roughly **40 seconds** of 48 kHz mono PCM
+fits — about 1.6 s per variant across all six modes at four variants each.
 
 ---
 

@@ -3,7 +3,7 @@ Name: BioMimicry
 short-description: A generative stochastic rhythm card. Six mathematical physics engines (horses, geese, frogs, rain, meteors, cicadas) drive four agents to produce organic, semi-random triggers, CV and audio.
 Language: C++ (Pico SDK / ComputerCard)
 Creator: Andy Jenkinson (uglifruit)
-Version: 0.1.0
+Version: 0.2.0
 Status: In development
 License: MIT (card source); vendored components keep their own licences
 Repository: https://github.com/uglifruit/WorkshopBio
@@ -64,11 +64,11 @@ panel:
       name: Population modulation
       description: Summed with Knob X to modulate how many agents (1-4) are active.
     - id: AudioIn1
-      name: Unused
-      description: Not used in this version.
+      name: Loudness (the ecosystem listens)
+      description: An envelope follower on whatever you patch in. A loud room agitates the geese into honking and shuts the cicadas up, so the card reacts to the rest of the patch rather than only to gates. Inactive when nothing is patched.
     - id: AudioIn2
-      name: Unused
-      description: Not used in this version.
+      name: Disturbance (transients)
+      description: Transient-sensitive rather than level-sensitive, because sudden movement is what alarms an animal. A sharp attack counts as a Spook. Inactive when nothing is patched.
     - id: PulseIn1
       name: The Spook (interrupt)
       description: Disrupts the environment. Horses - the herd startles into step, every horse landing together before drifting apart. Geese - spook the flock into a guaranteed cascade. Frogs - splash, scrambling all phases and destroying sync. Rain - wind gust, dumping energy into every bucket. Meteors - bolide, spiking density to maximum. Cicadas - a footstep in the grass, silencing the whole field at once before it creeps back in.
@@ -117,7 +117,7 @@ controls:
         description: All agents OR'd onto Pulse Out 1, an accent on Pulse Out 2, and continuous internal-state CV on both CV outs.
       down:
         name: Cycle ecosystem
-        description: Momentary tap cycles through the six ecosystems (Horses, Geese, Frogs, Rain, Meteors, Cicadas). HOLD at power-on to boot the PCM sample voices instead of the synthesized ones.
+        description: Momentary tap cycles through the six ecosystems (Horses, Geese, Frogs, Rain, Meteors, Cicadas). HOLD at power-on to boot DRONE mode - the same six engines driving sustained tone instead of triggers, an ambient counterpart to the rhythm card.
 
   leds:
     - when: { z: any }
@@ -133,9 +133,14 @@ host:
     gates and CV run at the full 48kHz; everything is integer fixed-point with no
     float in the hot path.
 
-    Hold the momentary switch DOWN at power-on to boot PCM sample playback instead
-    of the synthesized voices. Samples are baked into flash at build time from
-    samples/*.raw; with none present the firmware falls back to synthesis.
+    Hold the momentary switch DOWN at power-on to boot DRONE mode: the same six
+    engines driving sustained, continuously-bending tone instead of triggers - an
+    ambient counterpart made from the same physics.
+
+    PCM sample playback is a build-time choice rather than a boot mode. Each mode
+    takes four round-robin recordings baked from samples/*.raw; in Horses those
+    four ARE the hooves (LH, LF, RH, RF). With no samples present the firmware
+    builds and uses its synthesized voices.
 
     CREDITS - ComputerCard by Chris Johnson (Music Thing Modular). The Kuramoto
     model of coupled oscillators (Yoshiki Kuramoto); leaky integrate-and-fire and

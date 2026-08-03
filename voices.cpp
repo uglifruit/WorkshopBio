@@ -94,6 +94,11 @@ void VoiceBank::init(bool usePcm)
 		v.pcm = nullptr; v.pcmLen = 0; v.pcmPos = 0; v.pcmInc = 65536;
 		setPan(v, 2 + i * 4);
 		lastVariant_[i] = 0xFF;
+
+		DroneVoice &d = d_[i];
+		d.phase = 0; d.phase2 = 0; d.inc = 0; d.inc2 = 0;
+		d.pitch = kQ16One; d.level = 0; d.filt = 0; d.bright = 0;
+		d.noiseRng = 0x2468ACEu + static_cast<uint32_t>(i) * 40503u;
 	}
 }
 
@@ -171,10 +176,14 @@ void VoiceBank::note(int i, Mode m, int32_t accent, int32_t variation,
 
 	if (usePcm_)
 	{
-		v.pcm    = kModeSample[mi];
-		v.pcmLen = kModeSampleLen[mi];
+		// Play this variant's slice of the mode's blob — in Horses, the sample
+		// for the hoof that actually landed.
+		v.pcm    = kModeSample[mi] + kModeSampleOff[mi][v.variant];
+		v.pcmLen = kModeSampleSize[mi][v.variant];
 		v.pcmPos = 0;
-		v.pcmInc = static_cast<uint32_t>(pitchScale);
+		// Real recordings already differ from each other, so play them at pitch
+		// rather than stacking the synth's variant transposition on top.
+		v.pcmInc = 65536;
 		return;
 	}
 
@@ -190,6 +199,118 @@ void VoiceBank::note(int i, Mode m, int32_t accent, int32_t variation,
 		for (uint8_t k = 0; k < v.ksLen; k++)
 			v.ks[k] = static_cast<int16_t>(rand_bipolar(v.noiseRng) >> 3);
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Drone boot
+// ---------------------------------------------------------------------------
+//
+// Same six physics engines, completely different instrument. Instead of firing
+// one-shot voices, each agent's continuous state bends a sustained tone:
+// a horse's stride becomes a slow pitch sweep, a bucket's fill level a rising
+// drone, the frogs' phase coherence a chorus that thickens as they lock. The
+// triggers survive only as small accents, so events colour the texture rather
+// than punctuating it.
+
+// Fixed drone positions: wide and stable, so the four voices make an image you
+// can sit inside rather than something that moves around you.
+static const int32_t kPanCurveL[kNumAgents] = { 31000, 23000, 15000,  8000 };
+static const int32_t kPanCurveR[kNumAgents] = {  8000, 15000, 23000, 31000 };
+
+// Drone root pitches per mode, as 48kHz increments. Deliberately low and spread
+// so four agents make a chord rather than a cluster.
+static const uint32_t kDroneBase[kNumModes] = {
+	 5400000u,   // Horses  ~60Hz  — a low, heavy drone
+	 9800000u,   // Geese   ~110Hz — reedy
+	 7300000u,   // Frogs   ~82Hz  — the chorus
+	14600000u,   // Rain    ~165Hz — brighter, watery
+	 3600000u,   // Meteors ~40Hz  — subsonic rumble
+	21900000u    // Cicadas ~245Hz — high shimmer
+};
+
+// Per-agent interval, Q16 pitch multipliers. Root, fifth, octave, minor tenth —
+// a stack that stays consonant however many agents are active.
+static const int32_t kDroneInterval[kNumAgents] = { 65536, 98304, 131072, 157286 };
+
+void VoiceBank::droneUpdate(Mode m, const int32_t *state, int32_t global,
+                            uint8_t triggers, int active, int32_t timbre)
+{
+	int mi = static_cast<int>(m);
+
+	for (int i = 0; i < kNumAgents; i++)
+	{
+		DroneVoice &d = d_[i];
+
+		if (i >= active)
+		{
+			// Fade out rather than cut, so changing population is a swell.
+			d.level = slew(d.level, 0, 6);
+			continue;
+		}
+
+		// The agent's own state bends its pitch by up to a fifth. This is the
+		// heart of the mode: whatever the engine is doing internally is now
+		// audible as continuous motion instead of as discrete hits.
+		int32_t bend = kQ16One + (state[i] >> 1);
+		int32_t target = mul_q16(kDroneInterval[i], bend);
+		d.pitch = slew(d.pitch, target, 5);
+
+		// The whole-ecosystem value drives brightness, so the texture opens and
+		// closes with the global behaviour — density, agitation, coherence.
+		d.bright = slew(d.bright, global, 6);
+
+		// A trigger is an accent, not a note: a small level bump on top of a
+		// tone that never stops.
+		int32_t lvlTarget = (kQ16One * 3) / 5;
+		if (triggers & (1 << i)) lvlTarget = kQ16One;
+		d.level = slew(d.level, lvlTarget, (triggers & (1 << i)) ? 2 : 7);
+
+		// Set the oscillator increments; droneRender advances the phases at
+		// audio rate. Knob Y detunes the pair, from a unison shimmer out to a
+		// wide slow beating.
+		uint32_t base = kDroneBase[mi];
+		d.inc = static_cast<uint32_t>(
+			(static_cast<int64_t>(base) * d.pitch) >> 16);
+		d.inc2 = d.inc + (d.inc >> 9) + static_cast<uint32_t>(timbre >> 6);
+	}
+}
+
+void VoiceBank::droneRender(int active, int16_t &l, int16_t &r)
+{
+	int32_t accL = 0, accR = 0;
+
+	for (int i = 0; i < kNumAgents; i++)
+	{
+		DroneVoice &d = d_[i];
+		if (d.level <= 0 && i >= active) continue;
+
+		// Two detuned saws through a one-pole opened by the ecosystem's global
+		// state. Saws rather than sines so the filter has something to work on.
+		// The oscillators are advanced here, at 48kHz — droneUpdate only sets
+		// the increments, at the 1.5kHz control rate.
+		d.phase  += d.inc;
+		d.phase2 += d.inc2;
+		int32_t a = static_cast<int32_t>(d.phase  >> 20) - 2048;
+		int32_t b = static_cast<int32_t>(d.phase2 >> 20) - 2048;
+		int32_t s = (a + b) >> 1;
+
+		// Brightness maps to filter shift 5 (dark) .. 1 (open).
+		int32_t k = 5 - (d.bright >> 14);
+		if (k < 1) k = 1;
+		if (k > 5) k = 5;
+		d.filt += (s - d.filt) >> k;
+		s = d.filt;
+
+		s = mul_q16(s, d.level) >> 1;
+
+		// Drones sit at fixed positions, spread wide — the point is a stable
+		// stereo image you can sit inside, not movement.
+		accL += mul_q15(s, kPanCurveL[i]);
+		accR += mul_q15(s, kPanCurveR[i]);
+	}
+
+	l = clamp12(accL);
+	r = clamp12(accR);
 }
 
 void VoiceBank::render(int active, int16_t &l, int16_t &r)

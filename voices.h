@@ -52,6 +52,22 @@ struct Voice
 	uint32_t pcmInc;     // Q16 rate
 };
 
+/// One sustained drone voice, used only in Drone boot. Each agent gets an
+/// oscillator pair whose pitch and amplitude follow that agent's continuous
+/// engine state, so the same physics that fired triggers now bends tone.
+struct DroneVoice
+{
+	uint32_t phase;
+	uint32_t phase2;   // detuned partner, for movement without vibrato
+	uint32_t inc;      // set at control rate, advanced at audio rate
+	uint32_t inc2;
+	int32_t  pitch;    // Q16, slewed target pitch
+	int32_t  level;    // Q16, slewed amplitude
+	int32_t  filt;     // one-pole for the noise-based modes
+	int32_t  bright;   // Q16, slewed filter opening
+	uint32_t noiseRng;
+};
+
 class VoiceBank
 {
 public:
@@ -66,6 +82,15 @@ public:
 	/// Render one sample of all voices, summed and panned into L/R.
 	void render(int active, int16_t &l, int16_t &r);
 
+	/// Drone boot: hand the engine's continuous state to the drone voices. Call
+	/// once per control tick; `triggers` still marks events, which the drone
+	/// uses as accents rather than as note-ons.
+	void droneUpdate(Mode m, const int32_t *state, int32_t global,
+	                 uint8_t triggers, int active, int32_t timbre);
+
+	/// Drone boot: render one sample of the sustained voices.
+	void droneRender(int active, int16_t &l, int16_t &r);
+
 	bool usingPcm() const { return usePcm_; }
 
 private:
@@ -74,6 +99,7 @@ private:
 	void selectVariantAndPan(Voice &v, int agent, Mode m, uint8_t member);
 
 	Voice v_[kNumAgents];
+	DroneVoice d_[kNumAgents];
 	uint8_t lastVariant_[kNumAgents];  // for no-immediate-repeat
 	uint32_t rng_ = 0x9E3779B9u;
 	bool  usePcm_ = false;

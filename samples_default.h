@@ -38,6 +38,17 @@ static const uint32_t kModeSampleLen[kNumModes] = {
 	meteors_pcm_len, cicadas_pcm_len
 };
 
+// Round-robin variants live end to end inside each mode's array; these say
+// where each one starts and how long it is. In Horses the variant is the hoof.
+static const uint32_t *const kModeSampleOff[kNumModes] = {
+	horses_pcm_off, geese_pcm_off, frogs_pcm_off,
+	rain_pcm_off, meteors_pcm_off, cicadas_pcm_off
+};
+static const uint32_t *const kModeSampleSize[kNumModes] = {
+	horses_pcm_size, geese_pcm_size, frogs_pcm_size,
+	rain_pcm_size, meteors_pcm_size, cicadas_pcm_size
+};
+
 #else
 
 constexpr bool kHaveSamples = false;
@@ -48,6 +59,13 @@ static const int8_t *const kModeSample[kNumModes] = {
 	nullptr, nullptr, nullptr, nullptr, nullptr, nullptr
 };
 static const uint32_t kModeSampleLen[kNumModes] = { 0, 0, 0, 0, 0, 0 };
+static const uint32_t kZeroOff[4] = { 0, 0, 0, 0 };
+static const uint32_t *const kModeSampleOff[kNumModes] = {
+	kZeroOff, kZeroOff, kZeroOff, kZeroOff, kZeroOff, kZeroOff
+};
+static const uint32_t *const kModeSampleSize[kNumModes] = {
+	kZeroOff, kZeroOff, kZeroOff, kZeroOff, kZeroOff, kZeroOff
+};
 
 #endif
 

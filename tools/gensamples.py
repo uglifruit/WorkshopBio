@@ -119,18 +119,47 @@ def cicadas(dur=0.16):
     return out
 
 
+# Per-variant character. In Horses the variant IS THE HOOF (1=LH 2=LF 3=RH
+# 4=RF), and a real animal's hind hooves strike lower and heavier than its
+# fores — so these are not arbitrary detunes, they carry the front/back shape
+# of the gait. Elsewhere the variants are simply different individuals.
+VARIANT_PITCH = {
+    "horses":  [0.82, 1.12, 0.88, 1.20],   # LH, LF, RH, RF
+    "geese":   [1.00, 0.83, 1.19, 0.71],
+    "frogs":   [1.00, 0.78, 1.32, 0.93],
+    "rain":    [1.00, 1.24, 0.84, 1.41],
+    "meteors": [1.00, 0.76, 1.30, 0.88],
+    "cicadas": [1.00, 1.05, 0.95, 1.10],
+}
+
+
+def resample(data, ratio):
+    """Crude linear resample — adequate for placeholder one-shots."""
+    n = int(len(data) / ratio)
+    out = []
+    for i in range(n):
+        x = i * ratio
+        j = int(x)
+        f = x - j
+        a = data[j] if j < len(data) else 0.0
+        b = data[j + 1] if j + 1 < len(data) else 0.0
+        out.append(a + (b - a) * f)
+    return out
+
+
 def main():
     random.seed(1)
     os.makedirs(OUT, exist_ok=True)
     print(f"Writing placeholder samples to {OUT}/ (8-bit signed mono {SR}Hz)")
-    write_raw("horses", horses())
-    write_raw("geese", geese())
-    write_raw("frogs", frogs())
-    write_raw("rain", rain())
-    write_raw("meteors", meteors())
-    write_raw("cicadas", cicadas())
-    print("\nThese are procedural placeholders. Swap in real recordings and "
-          "rebuild.")
+    gens = {"horses": horses, "geese": geese, "frogs": frogs,
+            "rain": rain, "meteors": meteors, "cicadas": cicadas}
+    for mode, fn in gens.items():
+        base = fn()
+        for v, ratio in enumerate(VARIANT_PITCH[mode], start=1):
+            write_raw(f"{mode}_{v}", resample(base, ratio))
+    print("\nPlaceholders with four round-robin variants each. Swap in real "
+          "recordings\nusing the same _1.._4 naming and rebuild — no code "
+          "changes needed.")
 
 
 if __name__ == "__main__":

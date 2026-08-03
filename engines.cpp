@@ -266,6 +266,10 @@ void GeeseEngine::tick(const Ctrl &c, EngineOut &out)
 	// of seconds and the mode would read as broken. Chaos raises it further.
 	int32_t spark = (2 + (c.chaos >> 12)) * (kNumAgents + 1 - c.population);
 
+	// Geese are the opposite of shy: a loud room agitates them, raising the
+	// chance any bird sets the flock off. The card answers back to the patch.
+	if (c.loudness > 0) spark += mul_q16(c.loudness, 24);
+
 	// Contagion strength from Knob Main. Mildly shaped (x^1.5-ish via a blend of
 	// linear and squared) so the knob keeps resolution down low without going
 	// dead across the middle of its travel.
@@ -724,6 +728,16 @@ void CicadasEngine::tick(const Ctrl &c, EngineOut &out)
 	// toward an external tempo.
 	if (c.clock) field_ = (field_ + kQ16One / 4 > kQ16One) ? kQ16One
 	                                                       : field_ + kQ16One / 4;
+
+	// Cicadas are the shyest thing on the card: a loud room shuts them up.
+	// Audio In 1's envelope goes straight into fatigue, so the field thins as
+	// the rest of the patch gets busy and fills back in when it quietens.
+	if (c.loudness > 0)
+		for (int i = 0; i < swarm; i++)
+		{
+			fatigue_[i] += mul_q16(c.loudness, kQ16One / 40);
+			if (fatigue_[i] > kQ16One) fatigue_[i] = kQ16One;
+		}
 
 	// Knob Main = COUPLING DEPTH, and it scales both halves of the feedback loop
 	// at once: how much the field speeds insects up, and how much being in a
