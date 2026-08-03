@@ -293,9 +293,27 @@ whole path works before you have a single recording.
 ## Under the hood
 
 `ProcessSample()` runs at 48 kHz, but the physics don't need audio rate: engines tick at
-**1.5 kHz** (every 32nd sample), which is 32× cheaper and still gives 0.67 ms timing
-resolution — far finer than the ear resolves for triggers. Voice rendering, gate timing
-and CV output stay at the full 48 kHz.
+**1.5 kHz** (every 32nd sample), which cuts average CPU load 32× and still gives 0.67 ms
+timing resolution — far finer than the ear resolves for triggers. Voice rendering, gate
+timing and CV output stay at the full 48 kHz.
+
+That divider buys **throughput, not slack**. `controlTick()` is called inline from
+`ProcessSample()`, which runs inside the DMA interrupt, so on the sample where the physics
+fire the whole engine must still finish inside that one **20.83 µs** slot. The worst
+single sample is what decides whether audio glitches, not the average.
+
+To measure it, build with the profiler on:
+
+```sh
+cmake -B build-profile -G Ninja -DBIO_PROFILE=ON
+cmake --build build-profile
+```
+
+That build times the whole callback and each phase with the Cortex-M0+ SysTick counter
+and shows the worst case on the LEDs — one LED per ~16% of the 2604-cycle budget, all six
+flashing if any sample ever overran. A Down tap clears the peaks so each ecosystem can be
+measured separately, and Pulse Out 2 mirrors the callback duration for a scope. It
+compiles to nothing when off: the normal build is byte-identical either way.
 
 Everything is **integer fixed-point** — Q16 for levels and probabilities, `uint32_t`
 phase accumulators that wrap for free, a 257-entry quarter-wave sine LUT, and xorshift32

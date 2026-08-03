@@ -244,6 +244,48 @@ the build if it ever reaches the boundary.
 
 ---
 
+## A developer's correction: /32 does not buy you time
+
+A Workshop Computer developer read the code and pointed out:
+
+> *"Unless I misunderstand, calling the physics once per 32 samples doesn't help
+> with performance — because the physics still needs to finish within that ~20us
+> sample in which it is run?"*
+
+He is right, and it invalidated a claim we had been repeating.
+
+`controlTick()` is called **inline** from `ProcessSample()`, which runs inside
+the DMA interrupt handler (`ComputerCard::AudioCallback`). So on the one sample
+in 32 where the physics run, the whole engine still has to finish inside that
+single **20.83 µs** slot. Dividing by `kCtrlDiv` lowers the *average* load. It
+does not move the deadline.
+
+The figure in this log — "~55 cycles/sample amortised against a 2604-cycle
+budget" — was therefore measuring **throughput**, not the thing that decides
+whether audio glitches. What matters is the **worst single sample**, and that had
+never been measured. Static instruction counts could not settle it either: the
+Geese tick is 1233 instructions but contains 243 branches, so the count is a very
+loose upper bound rather than a real path.
+
+The honest response was to measure rather than argue, so `profile.h` was added:
+a SysTick-based cycle counter around the whole callback and each of its phases,
+reporting the worst case on the LEDs (one LED per ~16% of budget, all six
+flashing on an overrun). It compiles to nothing unless `-DBIO_PROFILE=ON`, and
+this was verified by checking that the normal build is byte-for-byte identical to
+the released firmware.
+
+Geese is the mode to watch: its excitation spread is the only O(n²) path left, and
+a full cascade is 12×11 = 132 inner iterations in one tick. Frogs was already made
+O(n) by the mean-field rewrite.
+
+His second point stands too: if the measurement shows headroom, the control rate
+can go *up* for finer trigger timing. That is a one-line change to `kCtrlDiv` —
+but worth making only once the headroom is a number rather than an assumption.
+
+**Status: instrumented, not yet measured on hardware.**
+
+---
+
 ## Standing notes
 
 - **`tools/simulate.py` duplicates the C++ constants.** It will drift if
@@ -251,10 +293,9 @@ the build if it ever reaches the boundary.
   worse than none.
 - **No host C++ compiler on this machine**, which is why the harness is a Python
   model rather than `tools/simulate.cpp` compiling the real sources.
-- CPU headroom is comfortable: worst engine ~55 cycles/sample amortised against a
-  2604-cycle budget. Those are static upper bounds from instruction counts, not
-  a measurement — the scope test on `ProcessSample()` duty cycle is still worth
-  doing.
+- **CPU timing is now measurable** — see the section above. The old claim here
+  ("~55 cycles/sample amortised") measured the wrong quantity and has been
+  removed.
 - **Drone mode has never been heard.** Its grain rates and stretch factors are
   calculated, not auditioned. Same for the audio-reactive thresholds, which are
   untested against real signal levels.

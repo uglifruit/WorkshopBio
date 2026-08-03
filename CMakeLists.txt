@@ -54,6 +54,15 @@ if (TARGET pcm_samples)
   add_dependencies(${CARD_NAME} pcm_samples)
 endif()
 
+# Cycle-count ProcessSample and show the worst case on the LEDs. Build into a
+# SEPARATE directory so the released firmware is never a profile build:
+#   cmake -B build-profile -G Ninja -DBIO_PROFILE=ON
+option(BIO_PROFILE "Cycle-count ProcessSample and report on the LEDs" OFF)
+if (BIO_PROFILE)
+  target_compile_definitions(${CARD_NAME} PRIVATE BIO_PROFILE=1)
+  message(STATUS "BIO_PROFILE on - this build reports timing, do not release it")
+endif()
+
 target_compile_options(${CARD_NAME} PRIVATE -Wdouble-promotion -Wfloat-conversion -Wall -Wextra)
 target_link_options(${CARD_NAME} PRIVATE -Wl,--print-memory-usage)
 # The Workshop Computer's crystal needs a long startup delay before the PLL locks.

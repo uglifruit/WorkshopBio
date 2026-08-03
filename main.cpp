@@ -18,6 +18,7 @@
 #include "samples_default.h"   // kHaveSamples
 #include "samplestore.h"       // user flash region
 #include "webui.h"             // USB-MIDI sample upload
+#include "profile.h"           // -DBIO_PROFILE=ON: cycle-count ProcessSample
 
 using namespace bio;
 
@@ -50,6 +51,10 @@ public:
 
 	virtual void ProcessSample()
 	{
+		// Times the WHOLE callback, which is the number that decides whether
+		// audio glitches — not the per-sample average.
+		BIO_PROFILE_SCOPE(Total);
+
 		// ---- Boot window ------------------------------------------------
 		// Decide the voice backend before any normal switch handling, so the
 		// power-on hold is never mistaken for a mode-cycle tap.
@@ -125,27 +130,88 @@ public:
 		}
 
 		// ---- Control tick (1.5kHz) --------------------------------------
+		// NOTE: this runs INLINE, inside the DMA interrupt. Dividing by
+		// kCtrlDiv lowers the average load but does NOT relax the deadline —
+		// on the sample where it fires, the whole engine must still finish
+		// within this one 20.83us slot. Build with -DBIO_PROFILE=ON to see
+		// what that actually costs.
 		if (++ctrlDiv_ >= kCtrlDiv)
 		{
 			ctrlDiv_ = 0;
+			BIO_PROFILE_SCOPE(Engine);
 			controlTick();
 		}
 
 		// ---- Audio (48kHz) ----------------------------------------------
 		int16_t l, r;
-		if (boot_ == BootMode::Drone) voices_.droneRender(population_, l, r);
-		else                          voices_.render(population_, l, r);
+		{
+			BIO_PROFILE_SCOPE(Voices);
+			if (boot_ == BootMode::Drone) voices_.droneRender(population_, l, r);
+			else                          voices_.render(population_, l, r);
+		}
 		AudioOut1(l);
 		AudioOut2(r);
 
-		// ---- Listening (48kHz) ------------------------------------------
-		listen();
+		{
+			BIO_PROFILE_SCOPE(Outputs);
+			// ---- Listening (48kHz) --------------------------------------
+			listen();
 
-		// ---- Gate/blip timers (48kHz) -----------------------------------
-		serviceOutputs();
+			// ---- Gate/blip timers (48kHz) -------------------------------
+			serviceOutputs();
+		}
+
+#ifdef BIO_PROFILE
+		profileReadout();
+#endif
 	}
 
 private:
+#ifdef BIO_PROFILE
+	// -------------------------------------------------------------------
+	// Show the worst-case cost on the LEDs, so "did it ever overrun?" can be
+	// answered by eye while playing, per mode, with no scope attached.
+	//
+	//   LEDs lit = peak as a fraction of the 2604-cycle budget, ~16% each.
+	//   All six FLASHING = at least one sample exceeded the budget.
+	//
+	// Pulse Out 2 additionally goes high for the duration of the callback, so a
+	// scope can confirm the SysTick figures independently.
+	void profileReadout()
+	{
+		if (++profDiv_ < 2000) return;      // ~24Hz, cheap
+		profDiv_ = 0;
+
+		if (ProfileOverran())
+		{
+			profFlash_ = !profFlash_;
+			for (int i = 0; i < 6; i++) LedOn(i, profFlash_);
+			return;
+		}
+
+		uint32_t frac = ProfilePeakFrac();          // Q16 of budget
+		int lit = static_cast<int>((frac * 6) >> 16);
+		if (lit > 6) lit = 6;
+		for (int i = 0; i < 6; i++) LedOn(i, i < lit);
+
+		// A Down tap clears the peaks, so each mode can be measured cleanly
+		// without power-cycling.
+		if (SwitchVal() == Switch::Down) BIO_PROFILE_RESET();
+	}
+
+	int  profDiv_ = 0;
+	bool profFlash_ = false;
+
+	// PulseOut2 is protected, so the gate hook goes through a static trampoline
+	// holding the one card instance. Only compiled in profile builds, and it
+	// takes over Pulse Out 2 — do not release a build with this on.
+	static BioMimicryCard *profCard_;
+	static void ProfGate(bool on) { if (profCard_) profCard_->PulseOut2(on); }
+public:
+	void EnableProfileGate() { profCard_ = this; bio::gProfGate = &ProfGate; }
+private:
+#endif
+
 	// -------------------------------------------------------------------
 	void controlTick()
 	{
@@ -431,9 +497,17 @@ private:
 	int      splash_       = 0;   // boot-mode announcement countdown
 };
 
+#ifdef BIO_PROFILE
+BioMimicryCard *BioMimicryCard::profCard_ = nullptr;
+#endif
+
 int main()
 {
+	BIO_PROFILE_INIT();
 	static BioMimicryCard card;
 	card.EnableNormalisationProbe();
+#ifdef BIO_PROFILE
+	card.EnableProfileGate();      // Pulse Out 2 mirrors the callback duration
+#endif
 	card.Run();
 }
