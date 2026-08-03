@@ -750,9 +750,16 @@ void CicadasEngine::tick(const Ctrl &c, EngineOut &out)
 
 	// Base call rate, sped up by however loud the field already is. This is the
 	// positive half of the loop.
+	//
+	// The base rate RISES with coupling to compensate for the fatigue that the
+	// same knob introduces. Without this the mode simply got quieter as it was
+	// turned up: peak activity fell from 7 calls/sec to 2, so a surging field
+	// sounded weaker than a steady one. Coupling should redistribute energy
+	// into waves, not remove it — the peaks stay loud, the troughs go quiet.
 	constexpr int32_t kBaseHz_q8 = 600;   // ~2.3 Hz
+	int32_t base = kBaseHz_q8 + mul_q16(kBaseHz_q8 * 5 / 4, coupling);
 	int32_t rateScale = kQ16One + mul_q16(mul_q16(field_, coupling), kQ16One) * 6;
-	int32_t hz_q8 = mul_q16(kBaseHz_q8 << 4, rateScale) >> 4;
+	int32_t hz_q8 = mul_q16(base << 4, rateScale) >> 4;
 
 	int32_t called = 0;
 	uint32_t fired = 0;
@@ -782,7 +789,7 @@ void CicadasEngine::tick(const Ctrl &c, EngineOut &out)
 		{
 			called++;
 			fired |= (1u << i);
-			fatigue_[i] += mul_q16(kQ16One / 3, coupling);   // calling is work
+			fatigue_[i] += mul_q16(kQ16One / 2, coupling);   // calling is work
 			if (fatigue_[i] > kQ16One) fatigue_[i] = kQ16One;
 		}
 

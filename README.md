@@ -75,7 +75,7 @@ continuously. `python tools/simulate.py gaits` verifies the footfalls biomechani
 | **Frogs** | **Decoupling** — 0.0 is maximum coupling (locked metronomic sync); 1.0 is zero coupling (total chaos) |
 | **Rain** | **Downpour** — 0.0 leak exceeds input (silence); 1.0 rapid stuttering torrents |
 | **Meteors** | **Debris density** — 0.0 rare isolated hits; 0.5 long silences swelling into dense waves; 1.0 constant barrage |
-| **Cicadas** | **Coupling depth** — 0.0 independent insects, a steady even drone; 1.0 the field drives itself into surges that collapse into silence |
+| **Cicadas** | **Coupling depth** — CCW: independent insects, a steady even drone. CW: the field drives itself into deep surges that collapse into near-silence and swell back. Intensity stays up as you turn clockwise; what changes is how strongly the field pulses. |
 
 ### Per-mode meaning of Knob Y (Chaos)
 
@@ -181,6 +181,20 @@ whole pond at night, Rain a steady downpour, Horses a herd passing on a road. Kn
 widens the pitch spread across grains, from a recognisable layer out to a smeared cloud.
 
 There are no oscillators in Drone — it is your recordings, sustained.
+
+**Drone's outputs** pair each gate with the density of the texture it came from, so the
+audio and control outs describe the same thing:
+
+| | Switch Up | Switch Middle |
+|---|---|---|
+| **Pulse Out 1** | All activity | Voice 1 |
+| **Pulse Out 2** | — | Voice 2 |
+| **CV Out 1** | Voice 1 density | Voice 1 density |
+| **CV Out 2** | Whole-ecosystem state | Voice 2 density |
+
+The CV outs are always continuous in Drone — it never fires CV trigger blips. Patch the
+audio to a reverb and the gates to a drum module and one ecosystem drives both the pad
+and the rhythm.
 
 ## PCM samples
 

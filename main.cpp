@@ -208,7 +208,31 @@ private:
 		}
 
 		// --- Trigger outputs. ---
-		if (routing_ == Routing::Discrete)
+		if (boot_ == BootMode::Drone)
+		{
+			// Drone pairs each gate with the DENSITY of the texture it came
+			// from, so the audio out and the control outs describe the same
+			// thing: you can hear a layer and modulate something else with how
+			// thick it is.
+			//
+			// Switch Up   — one voice:  gates on Pulse 1, its density on CV 1.
+			// Switch Mid  — two voices: agents 1 and 2 on Pulse 1 and Pulse 2,
+			//               their densities on CV 1 and CV 2.
+			if (routing_ == Routing::Discrete)
+			{
+				if (mask) pulseTimer_[0] = kGateSamples;
+				cvLevel_[0] = voices_.droneDensity(0);
+				cvLevel_[1] = out.global;
+			}
+			else
+			{
+				if (mask & 0b0001) pulseTimer_[0] = kGateSamples;
+				if (mask & 0b0010) pulseTimer_[1] = kGateSamples;
+				cvLevel_[0] = voices_.droneDensity(0);
+				cvLevel_[1] = voices_.droneDensity(1);
+			}
+		}
+		else if (routing_ == Routing::Discrete)
 		{
 			if (mask & 0b0001) pulseTimer_[0] = kGateSamples;
 			if (mask & 0b0010) pulseTimer_[1] = kGateSamples;
@@ -306,7 +330,12 @@ private:
 
 		for (int i = 0; i < 2; i++)
 		{
-			if (routing_ == Routing::Discrete)
+			// Only Rhythm's Discrete routing uses the CV outs as triggers
+			// (agents 3 and 4, which have no pulse out of their own). Drone
+			// always carries continuous density instead, in both positions.
+			bool cvAsTrigger = (boot_ == BootMode::Rhythm)
+			                && (routing_ == Routing::Discrete);
+			if (cvAsTrigger)
 			{
 				// CV out as a trigger: a calibrated 5V blip.
 				CVOutMillivolts(i, cvTimer_[i] > 0 ? 5000 : 0);

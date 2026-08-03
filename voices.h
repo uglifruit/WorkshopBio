@@ -118,6 +118,10 @@ public:
 	/// Drone boot: render one sample of the sustained voices.
 	void droneRender(int active, int16_t &l, int16_t &r);
 
+	/// Drone boot: how thick voice `i`'s texture currently is, Q16. Goes out on
+	/// the CV outs so the control side describes the same thing you hear.
+	int32_t droneDensity(int i) const { return d_[i].density; }
+
 	bool usingPcm() const { return usePcm_; }
 
 private:

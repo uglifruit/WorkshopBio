@@ -416,8 +416,9 @@ def cicadas(physics, chaos, pop, ticks, spook_every=0, clock_period=0):
                 fat[i] = Q
         if clock_period and t % clock_period == 0 and t:
             field = min(field + Q // 4, Q)
+        base = 600 + mul_q16(600 * 5 // 4, physics)
         rate = Q + mul_q16(mul_q16(field, physics), Q) * 6
-        hz = mul_q16(600 << 4, rate) >> 4
+        hz = mul_q16(base << 4, rate) >> 4
         called = 0
         fired = 0
         for i in range(swarm):
@@ -433,7 +434,7 @@ def cicadas(physics, chaos, pop, ticks, spook_every=0, clock_period=0):
             if phase[i] < b:
                 called += 1
                 fired |= 1 << i
-                fat[i] = min(fat[i] + mul_q16(Q // 3, physics), Q)
+                fat[i] = min(fat[i] + mul_q16(Q // 2, physics), Q)
             fat[i] = min(fat[i] + mul_q16(mul_q16(field, physics), Q // 150), Q)
             fat[i] = decay(fat[i], 12)
         inst = min(called * Q * 8 // swarm, Q) if swarm else 0
@@ -458,8 +459,9 @@ def cicadas_swing(physics, secs=30):
     hist = []
     swarm = SWARM_SIZE
     for t in range(secs * CTRL):
+        base = 600 + mul_q16(600 * 5 // 4, physics)
         rate = Q + mul_q16(mul_q16(field, physics), Q) * 6
-        hz = mul_q16(600 << 4, rate) >> 4
+        hz = mul_q16(base << 4, rate) >> 4
         called = 0
         for i in range(swarm):
             tired = Q - (fat[i] * 3 // 4)
@@ -469,7 +471,7 @@ def cicadas_swing(physics, secs=30):
             phase[i] = (phase[i] + inc) & MASK32
             if phase[i] < b:
                 called += 1
-                fat[i] = min(fat[i] + mul_q16(Q // 3, physics), Q)
+                fat[i] = min(fat[i] + mul_q16(Q // 2, physics), Q)
             fat[i] = min(fat[i] + mul_q16(mul_q16(field, physics), Q // 150), Q)
             fat[i] = decay(fat[i], 12)
         inst = min(called * Q * 8 // swarm, Q)
