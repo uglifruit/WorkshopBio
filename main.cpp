@@ -28,6 +28,11 @@ static constexpr int kGateSamples = 240;
 // also covers the release of the hold.
 static constexpr int kBootWindowSamples = 48000 / 2;   // ~0.5s
 
+// After booting, announce the mode on the LEDs for a moment: Rhythm lights the
+// left column, Drone the right. Without this the only way to tell the modes
+// apart is by ear, and a Drone patch is easily mistaken for broken samples.
+static constexpr int kSplashSamples = 48000;           // ~1s
+
 class BioMimicryCard : public ComputerCard
 {
 public:
@@ -48,20 +53,52 @@ public:
 		// power-on hold is never mistaken for a mode-cycle tap.
 		if (bootPhase_ < kBootWindowSamples)
 		{
-			if (SwitchVal() == Switch::Down) bootHeldDown_ = true;
+			// The switch is NOT readable straight away, and reads as Down until
+			// it settles. ComputerCard derives it from knobs[3], which comes off
+			// a ~60Hz smoothing filter starting at zero — and zero decodes as
+			// Down. So for the first few milliseconds of every boot the card
+			// reports Down wherever the switch actually is.
+			//
+			// The old code latched on "Down seen at any point in the window",
+			// which therefore latched on EVERY boot: both modes came up as
+			// Drone. Take a single reading once settled instead, which is what
+			// WorkshopZX's BootSelector does (see its main.cpp) and what is
+			// proven on this hardware.
 			if (++bootPhase_ == kBootWindowSamples)
 			{
 				// Holding the switch at power-on picks DRONE, a different
 				// instrument built from the same six engines. PCM sample
 				// playback is a build-time choice now (bake samples/ or don't),
 				// not something worth spending a whole boot mode on.
-				boot_ = bootHeldDown_ ? BootMode::Drone : BootMode::Rhythm;
+				boot_ = (SwitchVal() == Switch::Down) ? BootMode::Drone
+				                                     : BootMode::Rhythm;
 				voices_.init(kHaveSamples);
 				engines_[mode_]->reset(0xB10Du);
 				// Swallow the release of the boot hold.
 				switchArmed_ = (SwitchVal() != Switch::Down);
+				// Announce what booted, because otherwise the only way to know
+				// is by ear — and a Drone patch can be mistaken for broken
+				// samples. See the splash pattern in ProcessSample.
+				splash_ = kSplashSamples;
 			}
 			return;
+		}
+
+		// ---- Boot splash -------------------------------------------------
+		// LEDs are 0 1 / 2 3 / 4 5. Rhythm lights the left column, Drone the
+		// right, so which instrument you are in is visible on power-up.
+		if (splash_ > 0)
+		{
+			if (--splash_ == 0)
+			{
+				for (int i = 0; i < 6; i++) LedOff(i);
+			}
+			else if (splash_ == kSplashSamples - 1)
+			{
+				bool drone = (boot_ == BootMode::Drone);
+				for (int i = 0; i < 6; i++)
+					LedOn(i, ((i & 1) == 1) == drone);
+			}
 		}
 
 		// ---- Control tick (1.5kHz) --------------------------------------
@@ -197,17 +234,22 @@ private:
 		if (mask) activity_ = kQ16One;
 		activity_ = fast_exp_decay(activity_, 3);
 
-		for (int i = 0; i < kNumModes; i++)
+		// Leave the LEDs alone while the boot splash is still showing.
+		if (splash_ == 0)
 		{
-			if (i == mode_)
+			for (int i = 0; i < kNumModes; i++)
 			{
-				constexpr int32_t kIdleGlow = kQ16One / 5;
-				int32_t level = kIdleGlow + mul_q16(activity_, kQ16One - kIdleGlow);
-				LedBrightness(i, static_cast<uint16_t>(level >> 4));
-			}
-			else
-			{
-				LedOff(i);
+				if (i == mode_)
+				{
+					constexpr int32_t kIdleGlow = kQ16One / 5;
+					int32_t level = kIdleGlow
+					              + mul_q16(activity_, kQ16One - kIdleGlow);
+					LedBrightness(i, static_cast<uint16_t>(level >> 4));
+				}
+				else
+				{
+					LedOff(i);
+				}
 			}
 		}
 
@@ -333,7 +375,7 @@ private:
 	int32_t  cvSmooth_[2]   = { 0, 0 };
 
 	int      bootPhase_    = 0;
-	bool     bootHeldDown_ = false;
+	int      splash_       = 0;   // boot-mode announcement countdown
 };
 
 int main()

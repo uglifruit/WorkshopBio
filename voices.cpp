@@ -325,11 +325,15 @@ void VoiceBank::render(int active, int16_t &l, int16_t &r)
 
 		if (usePcm_)
 		{
-			if (v.pcm && v.pcmPos < (v.pcmLen << 16))
+			// Compare in SAMPLE space, not in Q16 position space: pcmLen << 16
+			// overflows 32 bits for anything longer than 65536 bytes (1.37s),
+			// which silently truncated the two longest meteor swooshes to under
+			// half their length.
+			uint32_t idx = v.pcmPos >> 16;
+			if (v.pcm && idx < v.pcmLen)
 			{
 				// 8-bit PCM, linear-interpolated so pitch-shifted playback
 				// doesn't alias badly.
-				uint32_t idx = v.pcmPos >> 16;
 				int32_t  mu  = static_cast<int32_t>(v.pcmPos & 0xFFFF);
 				int32_t  a   = v.pcm[idx];
 				int32_t  b   = (idx + 1 < v.pcmLen) ? v.pcm[idx + 1] : 0;
