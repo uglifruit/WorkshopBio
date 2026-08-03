@@ -21,6 +21,9 @@ Runs on a Music Thing Modular Workshop System Computer. Built on the RP2040 with
 >
 > Why the card is the way it is — including the things that were wrong first — is
 > in [docs/DEVLOG.md](docs/DEVLOG.md).
+>
+> Questions, bugs and patches: [**the BioMimicry thread**](https://discord.com/channels/1210238368898879569/1533895615442849812)
+> on the Music Thing Discord.
 
 ---
 
