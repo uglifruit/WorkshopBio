@@ -85,6 +85,7 @@ GAIT_OFFSET = [
     [0, 14418, 14418, 28836],   # canter 3-beat + suspension
     [0, 13763, 6554, 20315],    # gallop 4-beat rotary + float
 ]
+HORSE_SPEED = [65536, 63700, 67600, 62000]
 GAIT_HZ_MIN = [115, 205, 300, 380]
 GAIT_HZ_MAX = [205, 330, 420, 640]
 GAIT_NAME = ["Walk", "Trot", "Canter", "Gallop"]
@@ -92,11 +93,8 @@ LEG_NAME = ["LH", "LF", "RH", "RF"]
 
 
 def horses(physics, chaos, pop, ticks, spook_every=0, clock_period=0):
+    """A HERD: one stride clock per horse, each keeping all four hooves."""
     rng = 0x1234
-    stride = 0
-    last = [0xFF] * 4
-    jitter = [0] * 4
-    fires = [0] * 4
     gait = min(physics >> 14, 3)
     within = (physics & 0x3FFF) << 2
     hz = GAIT_HZ_MIN[gait] + mul_q16(within, GAIT_HZ_MAX[gait] - GAIT_HZ_MIN[gait])
@@ -104,25 +102,28 @@ def horses(physics, chaos, pop, ticks, spook_every=0, clock_period=0):
         ch = (256 * CTRL) // clock_period
         if ch > 32:
             hz = ch
-    inc = (hz * (1 << 32)) // (256 * CTRL)
+    base = (hz * (1 << 32)) // (256 * CTRL)
+    stride = [h * 0x30000000 for h in range(4)]
+    last = [[0xFF] * 4 for _ in range(4)]
+    jit = [[0] * 4 for _ in range(4)]
+    fires = [0] * 4
     for t in range(ticks):
         if spook_every and t % spook_every == 0 and t:
-            stride = 0
-            last = [0xFF] * 4
-        if clock_period and t % clock_period == 0 and t:
-            stride = 0
-            last = [0xFF] * 4
-        stride = (stride + inc) & MASK32
-        for i in range(4):
-            hp = (stride - (GAIT_OFFSET[gait][i] << 16)) & MASK32
-            if chaos:
-                rng, rb = rand_bipolar(rng)
-                jitter[i] = slew(jitter[i], mul_q16(rb, chaos), 5)
-                hp = (hp + (jitter[i] << 10)) & MASK32
-            step = hp >> 28
-            if step == 0 and last[i] != 0 and i < pop:
-                fires[i] += 1
-            last[i] = step
+            stride = [0] * 4
+            last = [[0xFF] * 4 for _ in range(4)]
+        for h in range(pop):
+            inc = (base * HORSE_SPEED[h]) >> 16
+            stride[h] = (stride[h] + inc) & MASK32
+            for i in range(4):
+                hp = (stride[h] - (GAIT_OFFSET[gait][i] << 16)) & MASK32
+                if chaos:
+                    rng, rb = rand_bipolar(rng)
+                    jit[h][i] = slew(jit[h][i], mul_q16(rb, chaos), 5)
+                    hp = (hp + (jit[h][i] << 10)) & MASK32
+                step = hp >> 28
+                if step == 0 and last[h][i] != 0:
+                    fires[h] += 1
+                last[h][i] = step
     return fires
 
 

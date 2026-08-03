@@ -25,7 +25,7 @@ Tap the momentary switch (Down) to cycle habitats. Each has its own internal log
 
 | Mode | Model | Behaviour |
 |---|---|---|
-| **Horses** | Real equine gaits | One stride clock drives four hooves at their true footfall offsets. Walk, trot, canter and gallop are the actual biomechanical patterns — including the suspension phase where all four feet leave the ground. |
+| **Horses** | Real equine gaits | A **herd**: each horse has its own stride clock driving four hooves at their true footfall offsets, and the animals slide in and out of step the way real horses travelling together never quite match pace. Walk, trot, canter and gallop are the actual biomechanical patterns — including the suspension phase where all four feet leave the ground. |
 | **Geese** | Stochastic contagion | A cascading probability network across a **flock of twelve**. One bird honking raises the odds for all the others, creating tight reactive clusters that erupt and fade. |
 | **Frogs** | Coupled oscillators | The Kuramoto model. Voices pull on each other's timing, fighting between perfect metronomic synchronisation and chaotic swarms — and they'll entrain to an external clock if you give them one. |
 | **Rain** | Leaky integrate-and-fire | Buckets fill with noise and constantly leak. An overflow **splashes downstream** into the next bucket, so drips pull each other along into rushing clusters, then fall apart. |
@@ -44,16 +44,18 @@ each hoof landing at its correct point in the stride:
 | **Canter** | LH 0.00 → [LF+RH] 0.22 → RF 0.44 | 56% float |
 | **Gallop** | LH 0.00 → RH 0.10 → LF 0.21 → RF 0.31 | 69% float (rotary — both hinds, then both fores) |
 
-Because all four hooves share one stride clock, the gait *holds together* however
-long it runs; Knob Y jitters each hoof's timing without breaking the pattern.
-`python tools/simulate.py gaits` verifies these against the biomechanics.
+Because each horse's four hooves share one stride clock, its gait *holds together*
+however long it runs; Knob Y jitters each hoof's timing without breaking the pattern.
+Knob X adds **whole horses**, never partial ones — a three-legged horse is not a
+smaller herd. Each animal runs slightly off its neighbours' pace, so the herd phases
+continuously. `python tools/simulate.py gaits` verifies the footfalls biomechanically.
 
 ## Panel
 
 | Control | Function |
 |---------|----------|
 | **Knob Main** | **The Physics** — the fundamental law of the current ecosystem (Gait & tempo · Contagion · Decoupling · Downpour · Debris density) |
-| **Knob X** | **Population** — how many agents (1–4) are alive in the ecosystem |
+| **Knob X** | **Population** — how many agents are alive: **horses in the herd**, birds in the flock, frogs in the pond, buckets on the leaf, meteors in the sky, insects in the field |
 | **Knob Y** | **Chaos / Humanize** — per-mode randomness and spread (timing jitter, spark rate, frequency spread, threshold variance, LFO wander) |
 | **Switch Down** (momentary) | **Tap to cycle** the ecosystem. **Hold at power-on** to boot the PCM sample voices. |
 | **Switch Up** | Routing: **Discrete** |
@@ -85,7 +87,7 @@ long it runs; Knob Y jitters each hoof's timing without breaking the pattern.
 
 | Jack | Function |
 |------|----------|
-| **Pulse In 1** | **The Spook** — a hardware interrupt that disrupts the environment. Horses: reset the stride (a unified landing). Geese: spook the flock into a guaranteed cascade. Frogs: splash — scramble every phase, destroying sync. Rain: wind gust — dump energy into every bucket. Meteors: bolide — spike density to maximum. **Cicadas: a footstep in the grass — the whole field falls silent at once**, then creeps back in. |
+| **Pulse In 1** | **The Spook** — a hardware interrupt that disrupts the environment. Horses: the herd startles into step, every horse landing together before drifting apart again. Geese: spook the flock into a guaranteed cascade. Frogs: splash — scramble every phase, destroying sync. Rain: wind gust — dump energy into every bucket. Meteors: bolide — spike density to maximum. **Cicadas: a footstep in the grass — the whole field falls silent at once**, then creeps back in. |
 | **Pulse In 2** | **The Clock** — an external tempo the ecosystem *entrains to* rather than obeys. Frogs treat it as a phantom frog in the pond and couple to it with whatever strength Knob Main is set to, so you can dial anywhere from locked-to-the-clock to completely indifferent. Horses lock their stride to it. Geese lean their honks toward the beat; Rain tops up every bucket so the nearest tips on the beat; Meteors swell the debris field. Stop the clock and the ecosystem drifts back to its own timing within ~3 seconds. |
 | **CV In 1** | Modulates **Knob Main** (the physics variable) |
 | **CV In 2** | Modulates **Knob X** (population) |
@@ -133,7 +135,7 @@ Every trigger picks one of four variants, and the variant *means* something:
 
 | Mode | What a variant is |
 |---|---|
-| **Horses** | **One per hoof** — hinds strike lower and heavier than fores, so the gait has an audible front/back shape as well as left/right. This is what stops a gait sounding like a drum machine. |
+| **Horses** | **One per hoof** — the engine reports which hoof landed and the voice plays that hoof, hinds lower and heavier than fores. Every horse in the herd plays all four of its own. This is what stops a gait sounding like a drum machine. |
 | **Geese** | Four birds of different size |
 | **Frogs** | Four species in the chorus |
 | **Rain** | Four drip sizes |
@@ -147,8 +149,9 @@ hear the same honk or drip twice running.
 
 Panning comes from the ecosystem, not from a knob:
 
-- **Fixed** (Horses) — each hoof holds its own spot. You are standing beside an animal;
-  its legs do not wander around you.
+- **Fixed** (Horses) — each horse holds its own place in the field, its four hooves
+  sitting just either side of that spot (near side / off side). The animals stay put;
+  you hear a herd spread in front of you, not four wandering sounds.
 - **Spread** (Geese, Frogs, Cicadas) — every swarm member has its own place, so twelve
   birds occupy twelve positions and a cascade sweeps across the field.
 - **Random** (Rain, Meteors) — each hit lands somewhere new, because each is a new object.

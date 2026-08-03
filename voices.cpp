@@ -97,15 +97,16 @@ void VoiceBank::init(bool usePcm)
 	}
 }
 
-void VoiceBank::selectVariantAndPan(Voice &v, int agent, Mode m)
+void VoiceBank::selectVariantAndPan(Voice &v, int agent, Mode m, uint8_t member)
 {
 	int mi = static_cast<int>(m);
 
 	if (m == Mode::Horses)
 	{
-		// One variant per hoof, fixed. This is the case that matters most: a
-		// gait only sounds like an animal when each leg has its own voice.
-		v.variant = static_cast<uint8_t>(agent);
+		// The variant IS the hoof that landed, reported by the engine. A gait
+		// only sounds like an animal when each leg has its own voice — and with
+		// a herd, each horse plays all four of its own hooves.
+		v.variant = static_cast<uint8_t>(member & (kNumVariants - 1));
 	}
 	else
 	{
@@ -122,8 +123,10 @@ void VoiceBank::selectVariantAndPan(Voice &v, int agent, Mode m)
 	switch (kPanMode[mi])
 	{
 	case PanMode::Fixed:
-		// Agent's own fixed spot — a stable stereo image.
-		setPan(v, 2 + agent * 4);
+		// Each horse holds its own place in the field, and its four hooves sit
+		// just around that spot — near/off side. The animal stays put; you hear
+		// its legs, not four wandering sounds.
+		setPan(v, 2 + agent * 4 + ((v.variant & 1) ? 1 : -1));
 		break;
 	case PanMode::Spread:
 		// Agent's spot, offset by which swarm member this is, so the twelve
@@ -137,7 +140,8 @@ void VoiceBank::selectVariantAndPan(Voice &v, int agent, Mode m)
 	}
 }
 
-void VoiceBank::note(int i, Mode m, int32_t accent, int32_t variation)
+void VoiceBank::note(int i, Mode m, int32_t accent, int32_t variation,
+                     uint8_t member)
 {
 	Voice &v = v_[i];
 	int mi = static_cast<int>(m);
@@ -152,7 +156,7 @@ void VoiceBank::note(int i, Mode m, int32_t accent, int32_t variation)
 	v.filt2 = 0;
 	v.bp = 0;
 
-	selectVariantAndPan(v, i, m);
+	selectVariantAndPan(v, i, m, member);
 
 	// Pitch: mode base, shifted by the round-robin variant, then nudged by the
 	// engine's state so repeated hits are never quite identical.

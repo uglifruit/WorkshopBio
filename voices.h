@@ -59,7 +59,9 @@ public:
 
 	/// Trigger agent `i`'s voice with the timbre for `m`.
 	/// `accent` (Q16) scales level; `variation` (Q16) nudges pitch per hit.
-	void note(int i, Mode m, int32_t accent, int32_t variation);
+	/// `member` names the sub-member that fired where the mode has one (in
+	/// Horses, which hoof); modes without one pass 0 and get a round robin.
+	void note(int i, Mode m, int32_t accent, int32_t variation, uint8_t member);
 
 	/// Render one sample of all voices, summed and panned into L/R.
 	void render(int active, int16_t &l, int16_t &r);
@@ -69,7 +71,7 @@ public:
 private:
 	/// Pick the round-robin variant for this hit and place it in the stereo
 	/// field, both according to the mode's own logic.
-	void selectVariantAndPan(Voice &v, int agent, Mode m);
+	void selectVariantAndPan(Voice &v, int agent, Mode m, uint8_t member);
 
 	Voice v_[kNumAgents];
 	uint8_t lastVariant_[kNumAgents];  // for no-immediate-repeat

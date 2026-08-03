@@ -23,9 +23,10 @@ summary: |
   triggers and audio that feel unmistakably alive.
 
   Tap the momentary switch to cycle six ecosystems, each with its own internal
-  logic. HORSES: one stride clock driving four hooves at their real equine
-  footfall offsets - walk, trot, canter and gallop as the actual biomechanical
-  patterns, suspension phases and all. GEESE: a cascading probability network
+  logic. HORSES: a herd, each animal running its own stride clock driving four
+  hooves at their real equine footfall offsets - walk, trot, canter and gallop as
+  the actual biomechanical patterns, suspension phases and all - with the horses
+  sliding in and out of step against each other. GEESE: a cascading probability network
   across a flock of twelve, where one honk spikes the odds for the rest. FROGS:
   the Kuramoto model of coupled oscillators, fighting between metronomic sync and
   chaotic swarms. RAIN: leaky integrate-and-fire buckets that fill with noise and
@@ -70,7 +71,7 @@ panel:
       description: Not used in this version.
     - id: PulseIn1
       name: The Spook (interrupt)
-      description: Disrupts the environment. Horses - reset the stride into a unified landing. Geese - spook the flock into a guaranteed cascade. Frogs - splash, scrambling all phases and destroying sync. Rain - wind gust, dumping energy into every bucket. Meteors - bolide, spiking density to maximum. Cicadas - a footstep in the grass, silencing the whole field at once before it creeps back in.
+      description: Disrupts the environment. Horses - the herd startles into step, every horse landing together before drifting apart. Geese - spook the flock into a guaranteed cascade. Frogs - splash, scrambling all phases and destroying sync. Rain - wind gust, dumping energy into every bucket. Meteors - bolide, spiking density to maximum. Cicadas - a footstep in the grass, silencing the whole field at once before it creeps back in.
     - id: PulseIn2
       name: The Clock (entrainment)
       description: An external tempo the ecosystem entrains to rather than obeys. Frogs treat it as a phantom oscillator and couple to it at whatever strength Knob Main sets, from locked-to-clock to indifferent. Horses lock their stride to it. Geese lean honks toward the beat, Rain tops up the buckets, Meteors swell the debris field. Stops mattering ~3 seconds after the clock stops.
@@ -102,7 +103,7 @@ controls:
         description: The fundamental law of the current ecosystem. Horses - gait and stride rate (walk/trot/canter/gallop, each with its own tempo band). Geese - contagion level. Frogs - decoupling (0 = locked sync, 1 = chaos). Rain - downpour intensity. Meteors - debris density. Cicadas - coupling depth (0 = a steady drone, 1 = surges that collapse into silence).
       x:
         name: Population
-        description: How many agents are alive in the ecosystem, 1 to 4. In the swarm modes (Geese, Meteors, Cicadas) each output channel carries three members, so a full population is twelve birds, meteors or insects.
+        description: How many agents are alive in the ecosystem, 1 to 4 - horses in the herd, frogs in the pond, buckets on the leaf. Horses always keep all four hooves; the knob adds whole animals. In the swarm modes (Geese, Meteors, Cicadas) each output channel carries three members, so a full population is twelve birds, meteors or insects.
       y:
         name: Chaos / Humanize
         description: Per-mode randomness and spread - per-hoof timing jitter (Horses), spontaneous spark rate (Geese), natural-frequency spread (Frogs), leak rate (Rain), density wander (Meteors), rate spread across the field (Cicadas).

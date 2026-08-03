@@ -18,9 +18,15 @@ public:
 	void reset(uint32_t seed) override;
 	void tick(const Ctrl &c, EngineOut &out) override;
 private:
-	uint32_t stride_;                 // the single master stride clock
-	int32_t  jitter_[kNumAgents];     // per-hoof timing offset, Q16
-	uint8_t  lastStep_[kNumAgents];
+	// Population is a HERD, not a leg count: each horse keeps all four hooves and
+	// gets its own stride clock, drifting slightly against the others the way
+	// animals travelling together never quite match step. Amputating hooves as
+	// the knob came down was the old behaviour and it only ever made one lame
+	// horse — turning the knob up added nothing at all.
+	uint32_t stride_[kNumAgents];     // one stride clock per horse
+	int32_t  speed_[kNumAgents];      // per-horse rate offset, Q16 around 1.0
+	int32_t  jitter_[kNumAgents][kNumAgents];  // [horse][hoof] timing offset
+	uint8_t  lastStep_[kNumAgents][kNumAgents];
 	uint8_t  lastGait_;
 	uint32_t rng_;
 };

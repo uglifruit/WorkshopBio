@@ -60,15 +60,31 @@ static const int32_t kGaitOffset[4][kNumAgents] = {
 static const int32_t kGaitHzMin[4] = {  115,  205,  300,  380 }; // 0.45..1.5 Hz
 static const int32_t kGaitHzMax[4] = {  205,  330,  420,  640 }; // 0.8 ..2.5 Hz
 
+// Per-horse speed offsets. Real animals travelling together never quite match
+// pace, so the herd continuously slides in and out of step — that slow phasing
+// between whole gaits is the sound the mode is after, and it is what the old
+// per-LEG drift was trying (and failing) to do.
+static const int32_t kHorseSpeed[kNumAgents] = {
+	65536,        // 1.000x
+	63700,        // 0.972x
+	67600,        // 1.031x
+	62000         // 0.946x
+};
+
 void HorsesEngine::reset(uint32_t seed)
 {
 	rng_ = seed | 1u;
-	stride_ = 0;
 	lastGait_ = 0xFF;
-	for (int i = 0; i < kNumAgents; i++)
+	for (int h = 0; h < kNumAgents; h++)
 	{
-		lastStep_[i] = 0xFF;
-		jitter_[i] = 0;
+		// Stagger the herd's starting positions so they don't begin in unison.
+		stride_[h] = static_cast<uint32_t>(h) * 0x30000000u;
+		speed_[h] = kHorseSpeed[h];
+		for (int i = 0; i < kNumAgents; i++)
+		{
+			lastStep_[h][i] = 0xFF;
+			jitter_[h][i] = 0;
+		}
 	}
 }
 
@@ -76,19 +92,25 @@ void HorsesEngine::tick(const Ctrl &c, EngineOut &out)
 {
 	out.triggers = 0;
 
-	// Pulse In = reset the stride: every hoof snaps back to the top of the gait,
-	// giving a unified landing before the pattern rolls on again.
-	if (c.spook) { stride_ = 0; for (int i = 0; i < kNumAgents; i++) lastStep_[i] = 0xFF; }
+	// Pulse In = the herd startles into step: every horse resets to the top of
+	// its stride at once, so they land together and then drift apart again.
+	if (c.spook)
+		for (int h = 0; h < kNumAgents; h++)
+		{
+			stride_[h] = 0;
+			for (int i = 0; i < kNumAgents; i++) lastStep_[h][i] = 0xFF;
+		}
 
 	// Knob Main picks the gait (quadrant) and the stride rate within it.
 	int gait = c.physics >> 14;               // 0..3
 	if (gait > 3) gait = 3;
 
-	// Changing gait re-rolls the jitter so the new gait starts clean.
+	// Changing gait re-rolls the step tracking so the new gait starts clean.
 	if (gait != lastGait_)
 	{
 		lastGait_ = static_cast<uint8_t>(gait);
-		for (int i = 0; i < kNumAgents; i++) lastStep_[i] = 0xFF;
+		for (int h = 0; h < kNumAgents; h++)
+			for (int i = 0; i < kNumAgents; i++) lastStep_[h][i] = 0xFF;
 	}
 
 	// Each gait has its own stride-rate band; the knob sweeps within it.
@@ -96,53 +118,69 @@ void HorsesEngine::tick(const Ctrl &c, EngineOut &out)
 	int32_t hz_q8  = kGaitHzMin[gait] +
 		mul_q16(within, kGaitHzMax[gait] - kGaitHzMin[gait]);
 
-	// Pulse In 2 entrains the stride: tapping it locks one stride per pulse, so
-	// the horse falls in step with an external clock.
+	// Pulse In 2 entrains the herd: every horse falls in step with the clock.
 	if (c.clock && c.clockPeriod > 0)
 	{
 		int32_t clockHz_q8 = (256 * kCtrlRate) / c.clockPeriod;
 		if (clockHz_q8 > 32) hz_q8 = clockHz_q8;
-		stride_ = 0;
-		for (int i = 0; i < kNumAgents; i++) lastStep_[i] = 0xFF;
+		for (int h = 0; h < kNumAgents; h++)
+		{
+			stride_[h] = 0;
+			for (int i = 0; i < kNumAgents; i++) lastStep_[h][i] = 0xFF;
+		}
 	}
 
-	uint32_t inc = static_cast<uint32_t>(
+	uint32_t baseInc = static_cast<uint32_t>(
 		(static_cast<int64_t>(hz_q8) * 4294967296LL) / (256LL * kCtrlRate));
 
-	// ONE stride clock for the whole animal. This is the key change: the gait
-	// stays locked together no matter how long it runs.
-	stride_ += inc;
-
-	for (int i = 0; i < kNumAgents; i++)
+	// One horse per output channel. Each keeps ALL FOUR hooves — a horse with
+	// three legs is not a smaller herd — and runs its own stride clock, so the
+	// animals phase against each other while every individual gait stays intact.
+	for (int h = 0; h < kNumAgents; h++)
 	{
-		// Where this hoof sits within the stride. Subtracting the offset means a
-		// hoof with offset 0.25 wraps a quarter of a stride AFTER the stride
-		// start — so the table reads directly as landing times.
-		uint32_t hoofPhase = stride_ -
-			(static_cast<uint32_t>(kGaitOffset[gait][i]) << 16);
+		if (h >= c.population) { out.state[h] = 0; continue; }
 
-		// Chaos = per-hoof timing jitter, a real horse's unevenness. Applied as
-		// a phase offset rather than a rate change, so legs stay in their gait
-		// relationship instead of drifting out of it.
-		if (c.chaos > 0)
+		uint32_t inc = static_cast<uint32_t>(
+			(static_cast<int64_t>(baseInc) * speed_[h]) >> 16);
+		stride_[h] += inc;
+
+		for (int i = 0; i < kNumAgents; i++)
 		{
-			jitter_[i] = slew(jitter_[i], mul_q16(rand_bipolar(rng_), c.chaos), 5);
-			hoofPhase += static_cast<uint32_t>(jitter_[i] << 10);
+			// Where this hoof sits within its horse's stride. Subtracting the
+			// offset means a hoof with offset 0.25 wraps a quarter of a stride
+			// AFTER the stride start — so the table reads as landing times.
+			uint32_t hoofPhase = stride_[h] -
+				(static_cast<uint32_t>(kGaitOffset[gait][i]) << 16);
+
+			// Chaos = per-hoof timing jitter, a real animal's unevenness.
+			// Applied as a phase offset rather than a rate change, so legs keep
+			// their gait relationship instead of drifting out of it.
+			if (c.chaos > 0)
+			{
+				jitter_[h][i] = slew(jitter_[h][i],
+					mul_q16(rand_bipolar(rng_), c.chaos), 5);
+				hoofPhase += static_cast<uint32_t>(jitter_[h][i] << 10);
+			}
+
+			// A hoof lands when its phase wraps past the top of the stride.
+			// Tracked in 16ths so the fine canter/gallop offsets resolve.
+			uint8_t step = static_cast<uint8_t>(hoofPhase >> 28);   // 0..15
+			if (step == 0 && lastStep_[h][i] != 0)
+			{
+				out.triggers |= (1 << h);
+				// Tell the voice WHICH hoof this was, so it plays that hoof's
+				// own sound — hinds lower and heavier than fores.
+				out.member[h] = static_cast<uint8_t>(i);
+			}
+			lastStep_[h][i] = step;
 		}
 
-		// A hoof lands when its phase wraps past the top of the stride. Track it
-		// in 16ths so the fine-grained canter/gallop offsets resolve cleanly.
-		uint8_t step = static_cast<uint8_t>(hoofPhase >> 28);   // 0..15
-		if (step == 0 && lastStep_[i] != 0) out.triggers |= (1 << i);
-		lastStep_[i] = step;
-
-		// State CV: this hoof's position in the stride — a per-leg LFO whose
-		// phase relationship to the others IS the gait.
-		out.state[i] = static_cast<int32_t>(hoofPhase >> 16);
+		// State CV: this horse's position in its stride — a per-animal LFO.
+		out.state[h] = static_cast<int32_t>(stride_[h] >> 16);
 	}
 
-	// Global: the stride clock itself, one cycle per full gait pattern.
-	out.global = static_cast<int32_t>(stride_ >> 16);
+	// Global: the lead horse's stride, a reference for the whole herd.
+	out.global = static_cast<int32_t>(stride_[0] >> 16);
 }
 
 // ===========================================================================

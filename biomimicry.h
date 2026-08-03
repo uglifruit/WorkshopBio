@@ -72,6 +72,12 @@ struct EngineOut
 	                               // exposed on the CV outs in Summed routing
 	int32_t global;                // Q16, a whole-ecosystem value (density,
 	                               // sync coherence, ...) for CV Out 2
+
+	/// Which sub-member of each agent fired, when the mode has a meaningful one:
+	/// in Horses this is WHICH HOOF (0=LH 1=LF 2=RH 3=RF), so the voice can play
+	/// that hoof's own sound. Engines that have no such distinction leave it 0
+	/// and the voice falls back to its own round robin.
+	uint8_t member[kNumAgents];
 };
 
 /// Common base for the five engines. Virtual dispatch happens once per control

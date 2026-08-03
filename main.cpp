@@ -134,6 +134,9 @@ private:
 
 		// --- Physics. ---
 		EngineOut out;
+		out.triggers = 0;
+		out.global = 0;
+		for (int i = 0; i < kNumAgents; i++) { out.state[i] = 0; out.member[i] = 0; }
 		engines_[mode_]->tick(c, out);
 
 		// Agents beyond the population never sound or fire.
@@ -143,7 +146,7 @@ private:
 		Mode m = static_cast<Mode>(mode_);
 		for (int i = 0; i < kNumAgents; i++)
 			if (mask & (1 << i))
-				voices_.note(i, m, kQ16One, out.state[i]);
+				voices_.note(i, m, kQ16One, out.state[i], out.member[i]);
 
 		// --- Trigger outputs. ---
 		if (routing_ == Routing::Discrete)
