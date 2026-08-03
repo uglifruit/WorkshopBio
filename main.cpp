@@ -16,6 +16,8 @@
 #include "engines.h"
 #include "voices.h"
 #include "samples_default.h"   // kHaveSamples
+#include "samplestore.h"       // user flash region
+#include "webui.h"             // USB-MIDI sample upload
 
 using namespace bio;
 
@@ -72,7 +74,8 @@ public:
 				// not something worth spending a whole boot mode on.
 				boot_ = (SwitchVal() == Switch::Down) ? BootMode::Drone
 				                                     : BootMode::Rhythm;
-				voices_.init(kHaveSamples);
+				webui_.Init();
+				voices_.init(AnySamples());
 				engines_[mode_]->reset(0xB10Du);
 				// Swallow the release of the boot hold.
 				switchArmed_ = (SwitchVal() != Switch::Down);
@@ -81,6 +84,26 @@ public:
 				// samples. See the splash pattern in ProcessSample.
 				splash_ = kSplashSamples;
 			}
+			return;
+		}
+
+		// ---- USB / sample upload ----------------------------------------
+		// Poll USB every control tick — cheap when nothing is connected.
+		if (ctrlDiv_ == 0) webui_.Task();
+
+		if (webui_.Uploading())
+		{
+			// Flash writes stall execution, so there is no point pretending the
+			// ecosystem is still running. Mute, show a progress bar on the LEDs,
+			// and let the upload have the machine.
+			AudioOut1(0);
+			AudioOut2(0);
+			PulseOut1(false);
+			PulseOut2(false);
+			int32_t prog = webui_.Progress();
+			int lit = (prog * 6) >> 16;
+			for (int i = 0; i < 6; i++) LedOn(i, i < lit);
+			if (++ctrlDiv_ >= kCtrlDiv) ctrlDiv_ = 0;
 			return;
 		}
 
@@ -380,6 +403,7 @@ private:
 	Engine       *engines_[kNumModes];
 
 	VoiceBank voices_;
+	WebUI     webui_;
 
 	uint8_t  mode_       = 0;
 	Routing  routing_    = Routing::Discrete;

@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BioMimicry — sample uploader</title>
+<style>
+  :root {
+    --bg:#0f1210; --panel:#171b18; --line:#2a312c; --text:#dfe6e0;
+    --dim:#8b968e; --accent:#7fd18c; --warn:#e0a24a; --err:#e06a5a;
+  }
+  * { box-sizing:border-box; }
+  body {
+    margin:0; padding:2rem 1rem 4rem; background:var(--bg); color:var(--text);
+    font:15px/1.55 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+  }
+  main { max-width:860px; margin:0 auto; }
+  h1 { font-size:1.6rem; margin:0 0 .25rem; letter-spacing:-.01em; }
+  h1 span { color:var(--accent); }
+  .sub { color:var(--dim); margin:0 0 1.75rem; }
+  .bar {
+    display:flex; gap:.75rem; align-items:center; flex-wrap:wrap;
+    padding:1rem; background:var(--panel); border:1px solid var(--line);
+    border-radius:10px; margin-bottom:1.5rem;
+  }
+  button {
+    font:inherit; font-weight:600; color:#0f1210; background:var(--accent);
+    border:0; border-radius:7px; padding:.55rem 1.1rem; cursor:pointer;
+  }
+  button.ghost { background:transparent; color:var(--text); border:1px solid var(--line); }
+  button:disabled { opacity:.4; cursor:not-allowed; }
+  #status { color:var(--dim); }
+  #status.ok { color:var(--accent); }
+  #status.err { color:var(--err); }
+  .modes { display:grid; gap:.75rem; }
+  .mode {
+    background:var(--panel); border:1px solid var(--line); border-radius:10px;
+    padding:.9rem 1rem;
+  }
+  .mode h2 { margin:0 0 .15rem; font-size:1rem; }
+  .mode .hint { color:var(--dim); font-size:.85rem; margin:0 0 .6rem; }
+  .slots { display:grid; grid-template-columns:repeat(auto-fill,minmax(94px,1fr)); gap:.4rem; }
+  .slot {
+    border:1px dashed var(--line); border-radius:7px; padding:.5rem .4rem;
+    text-align:center; font-size:.78rem; color:var(--dim); cursor:pointer;
+    background:#12160f00; transition:border-color .12s,color .12s;
+  }
+  .slot:hover, .slot.drag { border-color:var(--accent); color:var(--text); }
+  .slot.filled { border-style:solid; border-color:var(--accent); color:var(--text); }
+  .slot .n { display:block; font-weight:700; color:var(--text); }
+  .slot .len { display:block; font-size:.72rem; color:var(--dim); }
+  progress { width:100%; height:8px; margin-top:1rem; }
+  .note { color:var(--dim); font-size:.86rem; }
+  .note code { color:var(--text); background:#0000; }
+  table { border-collapse:collapse; width:100%; margin-top:.5rem; font-size:.86rem; }
+  td { padding:.15rem .5rem .15rem 0; color:var(--dim); }
+  td:first-child { color:var(--text); width:8rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Bio<span>Mimicry</span> — sample uploader</h1>
+  <p class="sub">
+    Drop your own recordings onto the card over USB. No rebuild, no toolchain.
+    Chrome or Edge (WebMIDI).
+  </p>
+
+  <div class="bar">
+    <button id="connect">Connect</button>
+    <button id="upload" class="ghost" disabled>Upload to card</button>
+    <button id="revert" class="ghost" disabled>Revert to built-in</button>
+    <span id="status">Not connected.</span>
+  </div>
+
+  <div class="modes" id="modes"></div>
+  <progress id="prog" value="0" max="1" hidden></progress>
+
+  <p class="note" style="margin-top:1.5rem">
+    Any WAV works — any sample rate, mono or stereo. The browser converts to the
+    card's format (8-bit mono 48&nbsp;kHz), trims silence and matches loudness
+    across everything you load, exactly as <code>tools/importwav.py</code> does.
+    Empty slots keep whatever is already baked into the firmware, so you can
+    replace one ecosystem and leave the rest alone.
+  </p>
+  <p class="note">
+    <strong>The card mutes while uploading.</strong> Writing flash halts the
+    RP2040's execution, so the ecosystem stops and the LEDs show a progress bar
+    until it finishes.
+  </p>
+</main>
+
+<script>
+"use strict";
+
+// --- protocol (must match webui.h) ---------------------------------------
+const MFR = 0x7D;
+const MSG = {
+  HELLO:0x01, INFO:0x02, UP_BEGIN:0x10, UP_SLOT:0x11, UP_CHUNK:0x12,
+  UP_SLOTEND:0x13, UP_END:0x14, ACK:0x15, ERR:0x16, ERASE:0x20,
+};
+
+const MODES = [
+  ["Horses",  "Variants are the HOOVES: 1 left hind, 2 left fore, 3 right hind, 4 right fore. Hinds strike lower and heavier than fores.", 4],
+  ["Geese",   "Up to eight birds. Picked at random, never the same one twice running.", 8],
+  ["Frogs",   "Up to eight species in the pond.", 8],
+  ["Rain",    "Up to eight drip sizes.", 8],
+  ["Meteors", "Up to eight distances. Long swooshes are fine here.", 8],
+  ["Cicadas", "Up to eight insects. A real field is fairly uniform.", 8],
+];
+
+const SR = 48000;
+const state = { midiOut:null, midiIn:null, slots:{}, info:null };
+
+// --- audio conversion ------------------------------------------------------
+
+async function decodeWav(file) {
+  const buf = await file.arrayBuffer();
+  const ctx = new OfflineAudioContext(1, 1, SR);
+  const audio = await ctx.decodeAudioData(buf);
+  // Sum to mono.
+  const n = audio.length;
+  const out = new Float32Array(n);
+  for (let c = 0; c < audio.numberOfChannels; c++) {
+    const d = audio.getChannelData(c);
+    for (let i = 0; i < n; i++) out[i] += d[i];
+  }
+  if (audio.numberOfChannels > 1)
+    for (let i = 0; i < n; i++) out[i] /= audio.numberOfChannels;
+  // Resample if the file was not already 48k.
+  if (audio.sampleRate === SR) return out;
+  const ratio = audio.sampleRate / SR;
+  const m = Math.floor(n / ratio);
+  const rs = new Float32Array(m);
+  for (let i = 0; i < m; i++) {
+    const x = i * ratio, j = x | 0, f = x - j;
+    rs[i] = out[j] + ((out[j + 1] || 0) - out[j]) * f;
+  }
+  return rs;
+}
+
+function trim(d, floor = 0.004) {
+  let a = 0, b = d.length;
+  while (a < b && Math.abs(d[a]) < floor) a++;
+  while (b > a && Math.abs(d[b - 1]) < floor) b--;
+  a = Math.max(0, a - 48);            // keep 1ms of pre-roll so attacks survive
+  return d.subarray(a, Math.max(b, a + 1));
+}
+
+function rms(d) {
+  if (!d.length) return 0;
+  let s = 0;
+  for (let i = 0; i < d.length; i++) s += d[i] * d[i];
+  return Math.sqrt(s / d.length);
+}
+
+// Match PERCEIVED loudness, then soft-limit. Peak normalisation does not work
+// here: a peak is usually one transient, so two files normalised to the same
+// peak can still sound nothing alike.
+function loudnessMatch(d, target, ceiling = 0.94) {
+  const r = rms(d);
+  if (r < 1e-9) return d;
+  const g = target / r, knee = ceiling * 0.7;
+  const out = new Float32Array(d.length);
+  for (let i = 0; i < d.length; i++) {
+    let v = d[i] * g, a = Math.abs(v);
+    if (a > knee) {
+      const over = (a - knee) / (1 - knee);
+      a = knee + (ceiling - knee) * (over / (1 + over));
+      v = v >= 0 ? a : -a;
+    }
+    out[i] = v;
+  }
+  return out;
+}
+
+function fadeOut(d, ms = 4) {
+  const n = Math.min((SR * ms / 1000) | 0, d.length);
+  for (let i = 0; i < n; i++) d[d.length - n + i] *= 1 - i / n;
+  return d;
+}
+
+function toBytes(d) {
+  const out = new Uint8Array(d.length);
+  for (let i = 0; i < d.length; i++) {
+    let s = Math.round(d[i] * 127);
+    out[i] = (s < -128 ? -128 : s > 127 ? 127 : s) & 0xFF;
+  }
+  return out;
+}
+
+// --- 7-bit SysEx encoding (mirrors Encode7bit in webui.cpp) ----------------
+
+function encode7bit(src) {
+  const groups = Math.ceil(src.length / 7);
+  const out = new Uint8Array(groups * 8);
+  let o = 0;
+  for (let i = 0; i < src.length; i += 7) {
+    const n = Math.min(7, src.length - i);
+    let high = 0;
+    for (let k = 0; k < n; k++) if (src[i + k] & 0x80) high |= 1 << k;
+    out[o++] = high;
+    for (let k = 0; k < n; k++) out[o++] = src[i + k] & 0x7F;
+  }
+  return out.subarray(0, o);
+}
+
+// --- MIDI ------------------------------------------------------------------
+
+function setStatus(msg, cls = "") {
+  const el = document.getElementById("status");
+  el.textContent = msg;
+  el.className = cls;
+}
+
+function send(payload) {
+  const msg = new Uint8Array(payload.length + 3);
+  msg[0] = 0xF0; msg[1] = MFR;
+  msg.set(payload, 2);
+  msg[msg.length - 1] = 0xF7;
+  state.midiOut.send(msg);
+}
+
+// Wait for the card to acknowledge, so we never outrun a flash write.
+function waitAck(timeoutMs = 4000) {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => {
+      state.midiIn.onmidimessage = null;
+      reject(new Error("card did not respond"));
+    }, timeoutMs);
+    state.midiIn.onmidimessage = (e) => {
+      const d = e.data;
+      if (d[0] !== 0xF0 || d[1] !== MFR) return;
+      clearTimeout(t);
+      state.midiIn.onmidimessage = null;
+      if (d[2] === MSG.ERR) reject(new Error("card reported error " + d[3]));
+      else resolve(d);
+    };
+  });
+}
+
+async function connect() {
+  try {
+    const midi = await navigator.requestMIDIAccess({ sysex: true });
+    for (const o of midi.outputs.values())
+      if (/biomimicry|workshop|pico/i.test(o.name)) state.midiOut = o;
+    for (const i of midi.inputs.values())
+      if (/biomimicry|workshop|pico/i.test(i.name)) state.midiIn = i;
+    if (!state.midiOut || !state.midiIn) {
+      setStatus("Card not found. Is it plugged in over USB?", "err");
+      return;
+    }
+    send([MSG.HELLO]);
+    const info = await waitAck(1500).catch(() => null);
+    if (info && info[2] === MSG.INFO) {
+      const cap = (info[6] << 14) | (info[7] << 7) | info[8];
+      const user = info[4] === 1;
+      state.info = { cap, user };
+      setStatus(`Connected. ${(cap / 1024 / 1024).toFixed(1)} MB for samples` +
+                (user ? " — user samples currently loaded." : " — using built-in samples."), "ok");
+      document.getElementById("revert").disabled = !user;
+    } else {
+      setStatus("Connected, but the card did not identify itself.", "err");
+    }
+    document.getElementById("upload").disabled = false;
+  } catch (e) {
+    setStatus("WebMIDI unavailable: " + e.message, "err");
+  }
+}
+
+// --- upload ----------------------------------------------------------------
+
+async function upload() {
+  const entries = Object.entries(state.slots);
+  if (!entries.length) { setStatus("Nothing loaded to upload.", "err"); return; }
+
+  // One loudness target across everything, so switching modes on the card does
+  // not jump in level.
+  const all = entries.map(([, s]) => rms(s.audio)).sort((a, b) => a - b);
+  const target = Math.max(all[all.length >> 1] || 0.06, 0.06);
+
+  const prepared = entries.map(([key, s]) => {
+    const d = fadeOut(loudnessMatch(s.audio, target));
+    return { key, mode: s.mode, variant: s.variant, bytes: toBytes(d) };
+  });
+
+  const total = prepared.reduce((n, p) => n + p.bytes.length, 0);
+  if (state.info && total > state.info.cap) {
+    setStatus(`Too much audio: ${(total/1024)|0} KB, card holds ${(state.info.cap/1024)|0} KB.`, "err");
+    return;
+  }
+
+  const prog = document.getElementById("prog");
+  prog.hidden = false; prog.value = 0;
+  document.getElementById("upload").disabled = true;
+  setStatus("Erasing… the card is muted while this runs.");
+
+  try {
+    send([MSG.UP_BEGIN, (total >> 14) & 0x7F, (total >> 7) & 0x7F, total & 0x7F]);
+    await waitAck(20000);      // the erase is a long stall
+
+    let done = 0;
+    for (const p of prepared) {
+      send([MSG.UP_SLOT, p.mode, p.variant]);
+      await waitAck();
+
+      // Chunk small enough that an encoded SysEx stays comfortable over USB.
+      const CHUNK = 336;       // 336 = 48 groups of 7 -> 384 encoded bytes
+      for (let off = 0; off < p.bytes.length; off += CHUNK) {
+        const enc = encode7bit(p.bytes.subarray(off, off + CHUNK));
+        const msg = new Uint8Array(enc.length + 1);
+        msg[0] = MSG.UP_CHUNK; msg.set(enc, 1);
+        send(msg);
+        await waitAck();
+        done += Math.min(CHUNK, p.bytes.length - off);
+        prog.value = done / total;
+        setStatus(`Uploading ${MODES[p.mode][0]} ${p.variant + 1}… ` +
+                  `${((done / total) * 100) | 0}%`);
+      }
+      send([MSG.UP_SLOTEND]);
+      await waitAck();
+    }
+
+    send([MSG.UP_END]);
+    await waitAck(10000);
+    prog.value = 1;
+    setStatus("Done. The card is running your samples.", "ok");
+    document.getElementById("revert").disabled = false;
+  } catch (e) {
+    setStatus("Upload failed: " + e.message, "err");
+  } finally {
+    document.getElementById("upload").disabled = false;
+  }
+}
+
+async function revert() {
+  try {
+    send([MSG.ERASE]);
+    await waitAck(8000);
+    setStatus("Reverted to the built-in samples.", "ok");
+    document.getElementById("revert").disabled = true;
+  } catch (e) {
+    setStatus("Could not revert: " + e.message, "err");
+  }
+}
+
+// --- UI --------------------------------------------------------------------
+
+function build() {
+  const wrap = document.getElementById("modes");
+  MODES.forEach(([name, hint, count], mi) => {
+    const div = document.createElement("div");
+    div.className = "mode";
+    div.innerHTML = `<h2>${name}</h2><p class="hint">${hint}</p>`;
+    const slots = document.createElement("div");
+    slots.className = "slots";
+    for (let v = 0; v < count; v++) {
+      const s = document.createElement("label");
+      s.className = "slot";
+      s.innerHTML = `<span class="n">${v + 1}</span><span class="len">empty</span>`;
+      const inp = document.createElement("input");
+      inp.type = "file"; inp.accept = "audio/*,.wav"; inp.hidden = true;
+      inp.onchange = () => inp.files[0] && load(mi, v, inp.files[0], s);
+      s.appendChild(inp);
+      s.onclick = (e) => { if (e.target !== inp) inp.click(); };
+      s.ondragover = (e) => { e.preventDefault(); s.classList.add("drag"); };
+      s.ondragleave = () => s.classList.remove("drag");
+      s.ondrop = (e) => {
+        e.preventDefault(); s.classList.remove("drag");
+        if (e.dataTransfer.files[0]) load(mi, v, e.dataTransfer.files[0], s);
+      };
+      slots.appendChild(s);
+    }
+    div.appendChild(slots);
+    wrap.appendChild(div);
+  });
+}
+
+async function load(mode, variant, file, el) {
+  try {
+    let d = await decodeWav(file);
+    d = trim(d);
+    state.slots[`${mode}:${variant}`] = { mode, variant, audio: d, name: file.name };
+    el.classList.add("filled");
+    el.querySelector(".len").textContent = `${(d.length / 48) | 0} ms`;
+  } catch (e) {
+    el.querySelector(".len").textContent = "unreadable";
+  }
+}
+
+document.getElementById("connect").onclick = connect;
+document.getElementById("upload").onclick = upload;
+document.getElementById("revert").onclick = revert;
+build();
+</script>
+</body>
+</html>

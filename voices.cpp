@@ -5,7 +5,7 @@
 // from the ecosystem rather than from a knob.
 
 #include "voices.h"
-#include "samples_default.h"   // pulls in samples.h if baked, else stubs
+#include "samplestore.h"       // user flash region, with baked fallback
 
 namespace bio {
 
@@ -112,7 +112,9 @@ static inline void setPan(Voice &v, int pos17)
 
 void VoiceBank::init(bool usePcm)
 {
-	usePcm_ = usePcm && kHaveSamples;
+	// AnySamples() covers both sources: a user upload alone is enough, even in
+	// a build with nothing baked in.
+	usePcm_ = usePcm && AnySamples();
 	for (int i = 0; i < kNumAgents; i++)
 	{
 		Voice &v = v_[i];
@@ -216,8 +218,9 @@ void VoiceBank::note(int i, Mode m, int32_t accent, int32_t variation,
 	{
 		// Play this variant's slice of the mode's blob — in Horses, the sample
 		// for the hoof that actually landed.
-		v.pcm    = kModeSample[mi] + kModeSampleOff[mi][v.variant];
-		v.pcmLen = kModeSampleSize[mi][v.variant];
+		SampleRef sr = ResolveSample(mi, v.variant);
+		v.pcm    = sr.data;
+		v.pcmLen = sr.len;
 		v.pcmPos = 0;
 
 		// Playback rate. Everything used to play at exactly 1:1, so four horses
@@ -374,8 +377,9 @@ void VoiceBank::droneUpdate(Mode m, const int32_t *state, int32_t global,
 			// Pick any variant — in Drone the recordings are raw material, so
 			// the hoof/individual distinction does not apply.
 			uint8_t var = static_cast<uint8_t>(xorshift32(d.rng) & (kNumVariants - 1));
-			g.pcm = kModeSample[mi] + kModeSampleOff[mi][var];
-			g.len = kModeSampleSize[mi][var];
+			SampleRef sr = ResolveSample(mi, var);
+			g.pcm = sr.data;
+			g.len = sr.len;
 
 			// Start somewhere inside the sample, not always at the attack —
 			// repeated attacks would read as a rhythm rather than a texture.

@@ -46,7 +46,9 @@ add_executable(${CARD_NAME}
   main.cpp
   engines.cpp
   voices.cpp
-  fastmath.cpp)
+  fastmath.cpp
+  webui.cpp
+  usb_descriptors.c)
 
 if (TARGET pcm_samples)
   add_dependencies(${CARD_NAME} pcm_samples)
@@ -61,6 +63,22 @@ target_compile_definitions(${CARD_NAME} PRIVATE PICO_XOSC_STARTUP_DELAY_MULTIPLI
 target_include_directories(${CARD_NAME} PUBLIC ${CMAKE_CURRENT_LIST_DIR})
 target_link_libraries(${CARD_NAME}
   pico_unique_id pico_stdlib pico_multicore
-  hardware_dma hardware_i2c hardware_pwm hardware_adc hardware_spi hardware_vreg)
+  hardware_dma hardware_i2c hardware_pwm hardware_adc hardware_spi hardware_vreg
+  hardware_flash tinyusb_device tinyusb_board)
+
+# The last 1MB of flash is reserved for user samples uploaded over USB (see
+# samplestore.h). Keep the firmware image out of it.
+target_compile_definitions(${CARD_NAME} PRIVATE PICO_FLASH_SIZE_BYTES=2097152)
+
+# Guard the boundary. The firmware image (code + baked samples) must not reach
+# 0x100000, or flashing it would overwrite uploaded user samples and an upload
+# would overwrite the firmware. Baked audio is the thing most likely to push it
+# over, so fail the build loudly rather than corrupt a card.
+add_custom_command(TARGET ${CARD_NAME} POST_BUILD
+  COMMAND ${CMAKE_COMMAND}
+    -DELF=$<TARGET_FILE:${CARD_NAME}>
+    -DOBJDUMP=${CMAKE_OBJDUMP}
+    -DLIMIT=1048576
+    -P ${CMAKE_CURRENT_LIST_DIR}/tools/checksize.cmake)
 pico_add_extra_outputs(${CARD_NAME})
 pico_enable_stdio_usb(${CARD_NAME} 0)

@@ -196,7 +196,26 @@ The CV outs are always continuous in Drone — it never fires CV trigger blips. 
 audio to a reverb and the gates to a drum module and one ecosystem drives both the pad
 and the rhythm.
 
-## PCM samples
+## Replacing samples without a rebuild
+
+Open [`interface.html`](interface.html) in Chrome or Edge, plug the card in over USB and
+click **Connect**. Drag WAVs onto the mode slots and press **Upload** — the browser
+converts them (any rate, mono or stereo), matches loudness across everything you load,
+and streams them into a 1&nbsp;MB region of the card's flash over WebMIDI SysEx.
+
+Uploaded samples **override the baked ones per slot**, so you can replace just the geese
+and keep everything else. **Revert to built-in** forgets them again. A full library
+takes a few seconds.
+
+> The card **mutes while uploading**. Writing flash halts the RP2040's execution, so the
+> ecosystem stops and the LEDs show a progress bar until it finishes. Uploading is a
+> setup activity, not a performance one.
+
+Flash layout: firmware and baked samples occupy the first 1&nbsp;MB, user samples the
+second. The build fails loudly if the firmware ever grows into the user region, because
+that would make flashing destroy uploads and uploads destroy the firmware.
+
+## PCM samples (baked at build time)
 
 Sample playback is a **build-time** choice, not a boot mode: bake recordings into
 `samples/` and they replace the synthesized voices in Rhythm boot. With no `samples/`
