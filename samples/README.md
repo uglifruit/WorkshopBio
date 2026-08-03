@@ -10,6 +10,10 @@ Sourced from [**Pixabay**](https://pixabay.com) and redistributed here under the
 permits use and redistribution without attribution. They are committed to the
 repository because without them a fresh clone builds a silent instrument.
 
+**These recordings are not covered by the card's CC BY 4.0 licence** — they are
+not the card author's to relicense. The [LICENSE](../LICENSE) at the repository
+root covers the source code only.
+
 Levels were matched across the whole library by `tools/importwav.py` — RMS rather
 than peak, because a peak is usually a single transient and peak-normalising
 leaves quiet-bodied recordings still sounding quiet. Corrections ranged from

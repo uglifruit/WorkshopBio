@@ -356,7 +356,15 @@ default PATH — see [CLAUDE.md](CLAUDE.md) for the exact invocation.
 
 ## Licence
 
-The card's own source is Andy's. Vendored components keep their own licences
-(`ComputerCard.h`).
+**[CC BY 4.0](LICENSE)** — Creative Commons Attribution 4.0 International.
+Use it, fork it, sell it, put it in your own card; just credit
+**Andy Jenkinson (uglifruit)**.
+
+Two things in this repository are not mine to relicense and keep their own terms:
+
+| | |
+|---|---|
+| [`samples/*.raw`](samples/) | Recordings from [Pixabay](https://pixabay.com), under the Pixabay Content License — see [samples/README.md](samples/README.md) |
+| `ComputerCard.h` | The Music Thing card library by Chris Johnson, MIT |
 
 *Step away from the grid and let the ecosystem run.*

@@ -5,7 +5,7 @@ Language: C++ (ComputerCard)
 Creator: Andy Jenkinson (uglifruit)
 Version: 1.0.0
 Status: Released
-License: MIT (card source); sample library from Pixabay
+License: CC BY 4.0 (card source); samples from Pixabay; ComputerCard.h MIT
 Repository: https://github.com/uglifruit/WorkshopBio
 Editor: interface.html
 date-created: 2026-08-02
@@ -186,7 +186,10 @@ host:
     recordings per slot, so one ecosystem can be replaced while the rest stay.
     The card mutes during an upload because writing flash halts execution.
 
-    Sample library from Pixabay, used under the Pixabay Content License.
+    LICENCE - the card's own source is CC BY 4.0: use, fork or sell it, just
+    credit Andy Jenkinson (uglifruit). The sample library is from Pixabay under
+    the Pixabay Content License and is not mine to relicense; ComputerCard.h
+    keeps its own MIT licence.
 
     CREDITS - ComputerCard by Chris Johnson (Music Thing Modular). The Kuramoto
     model of coupled oscillators (Yoshiki Kuramoto); leaky integrate-and-fire and
