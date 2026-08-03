@@ -181,22 +181,56 @@ Sample playback is a **build-time** choice, not a boot mode: bake recordings int
 `samples/` and they replace the synthesized voices in Rhythm boot. With no `samples/`
 directory the firmware still builds and uses synthesis.
 
-Each mode takes **four round-robin recordings**, and the variants are not decoration:
+Each mode takes **four round-robin recordings**, and the variants are not decoration.
+
+Drop WAV files into `samples/incoming/` and run the importer:
 
 ```sh
-ffmpeg -i clop_left_hind.wav -ac 1 -ar 48000 -f s8 samples/horses_1.raw
+python tools/importwav.py
 ```
 
-`horses_1..4` are **LH, LF, RH, RF** — the firmware asks for the hoof that actually
-landed. Hind hooves strike lower and heavier than fores on a real animal, so ordering
-them correctly is most of what makes a gait sound like an animal. For the other modes the
-four are simply different individuals, picked at random with no immediate repeat.
+It accepts **any sample rate, mono or stereo, 8/16/24/32-bit or float**, and converts to
+the 8-bit signed mono 48 kHz `.raw` the build bakes in — resampling, summing to mono,
+trimming silence, normalising and applying a short fade-out. Standard library only, no
+ffmpeg needed.
 
-A bare `horses.raw` with no number still works and is used for all four variants.
-`python tools/gensamples.py` writes procedural placeholders in the right layout.
+Name them `mode_variant.wav`:
 
-Budget: code is ~107 KB of the 2 MB flash, so roughly **40 seconds** of 48 kHz mono PCM
-fits — about 1.6 s per variant across all six modes at four variants each.
+```
+horses_1.wav  horses_2.wav  horses_3.wav  horses_4.wav
+geese_1.wav   frogs_1.wav   rain_1.wav    meteors_1.wav   cicadas_1.wav
+```
+
+**`horses_1..4` are LH, LF, RH, RF** — left hind, left fore, right hind, right fore. The
+firmware asks for the hoof that actually landed, and hind hooves strike lower and heavier
+than fores on a real animal, so putting them in the right slots is most of what makes a
+gait sound like an animal. For the other modes the four are simply different individuals,
+picked at random with no immediate repeat.
+
+Fewer than four is fine: missing variants reuse whichever you supplied, and a bare
+`horses.wav` with no number is used for all four.
+
+**What makes a good source:** a single isolated hit, trimmed tight to the transient (the
+attack is what identifies the sound), and **dry** — the card has no reverb, so any
+recorded ambience is baked in forever.
+
+Rough lengths, and the flash they cost at four variants each:
+
+| Mode | Length | Flash |
+|---|---|---|
+| Horses | ~180 ms | 35 KB |
+| Geese | ~400 ms | 77 KB |
+| Frogs | ~300 ms | 58 KB |
+| Rain | ~120 ms | 23 KB |
+| Meteors | ~700 ms | 134 KB |
+| Cicadas | ~200 ms | 38 KB |
+
+Total budget: code is ~107 KB of the 2 MB flash, leaving **~41 seconds** of 48 kHz mono
+PCM — about 1.7 s per variant across all 24. The table above comes to ~365 KB, so there
+is a lot of room; longer samples are fine, they just cost flash.
+
+`python tools/gensamples.py` writes procedural placeholders in the same layout, so the
+whole path works before you have a single recording.
 
 ---
 
