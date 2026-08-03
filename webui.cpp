@@ -10,6 +10,8 @@
 
 namespace bio {
 
+volatile bool WebUI::flashBusy = false;
+
 // ---------------------------------------------------------------------------
 // 7-bit encoding
 // ---------------------------------------------------------------------------
@@ -61,16 +63,23 @@ uint32_t Decode7bit(const uint8_t *src, uint32_t srcLen, uint8_t *dst,
 
 static void __not_in_flash_func(EraseRegion)(uint32_t off, uint32_t len)
 {
+	WebUI::flashBusy = true;
+	__sev();                                  // wake core 0 into its park loop
+	busy_wait_us(50);                         // let it get there
 	uint32_t ints = save_and_disable_interrupts();
 	flash_range_erase(off, len);
 	restore_interrupts(ints);
+	WebUI::flashBusy = false;
 }
 
 static void __not_in_flash_func(ProgramPage)(uint32_t off, const uint8_t *data)
 {
+	WebUI::flashBusy = true;
+	busy_wait_us(20);
 	uint32_t ints = save_and_disable_interrupts();
 	flash_range_program(off, data, 256);
 	restore_interrupts(ints);
+	WebUI::flashBusy = false;
 }
 
 // ---------------------------------------------------------------------------

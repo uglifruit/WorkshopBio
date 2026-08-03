@@ -62,6 +62,15 @@ public:
 	/// the ecosystem, because flash writes stall execution anyway.
 	bool Uploading() const { return uploading_; }
 
+	/// Set by core 1 immediately before it erases or programs flash, cleared
+	/// after. While it is true, core 0 must not execute ANY flash-resident code
+	/// or fetch from XIP — it parks in a RAM-resident spin instead.
+	///
+	/// This became a real hazard, not a theoretical one, when USB moved to core
+	/// 1: previously the flash write happened on the same core that was running
+	/// the audio callback, so nothing else could run. Now core 0 keeps going.
+	static volatile bool flashBusy;
+
 	/// 0..kQ16One, for the LED progress display.
 	int32_t Progress() const;
 

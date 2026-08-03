@@ -19,8 +19,15 @@
 #include "samplestore.h"       // user flash region
 #include "webui.h"             // USB-MIDI sample upload
 #include "profile.h"           // -DBIO_PROFILE=ON: cycle-count ProcessSample
+#include "pico/multicore.h"
 
 using namespace bio;
+
+// Shared with core 1, which does nothing but service USB. Single writer per
+// field (core 0 sets them once at the end of boot, core 1 only reads), so no
+// lock is needed — the same discipline WorkshopZX uses for its CrossCore.
+static volatile bool  gUsbReady = false;
+static WebUI * volatile gWebUI = nullptr;
 
 // Gate width for the pulse outs and the CV-out trigger blips: 5ms at 48kHz is
 // comfortably long enough for any drum module or envelope to register.
@@ -47,10 +54,36 @@ public:
 		engines_[3] = &rain_;
 		engines_[4] = &meteors_;
 		engines_[5] = &cicadas_;
+		// USB runs on core 1. tud_task() is TinyUSB's whole device stack and is
+		// unbounded by design — measured at up to 36000 cycles, i.e. 14x the
+		// entire 20.8us audio budget. Calling that from inside the audio
+		// interrupt was always wrong; it only looked survivable because it is
+		// intermittent, and every occurrence drops samples.
+		multicore_launch_core1(core1Entry);
+	}
+
+	/// Core 1: nothing but USB. It must not touch anything core 0 owns.
+	static void core1Entry()
+	{
+		// Wait for core 0 to finish booting and construct the WebUI.
+		while (!gUsbReady) tight_loop_contents();
+		for (;;) gWebUI->Task();
 	}
 
 	virtual void __not_in_flash_func(ProcessSample)()
 	{
+		// Core 1 is about to erase or program flash, which disables XIP. Park
+		// here — this function is RAM-resident, so spinning is safe — and touch
+		// nothing until it is finished. Without this, any XIP fetch during the
+		// write would hard-fault.
+		if (WebUI::flashBusy)
+		{
+			AudioOut1(0);
+			AudioOut2(0);
+			while (WebUI::flashBusy) tight_loop_contents();
+			return;
+		}
+
 		// Times the WHOLE callback, which is the number that decides whether
 		// audio glitches — not the per-sample average.
 		BIO_PROFILE_SCOPE(Total);
@@ -80,6 +113,8 @@ public:
 				boot_ = (SwitchVal() == Switch::Down) ? BootMode::Drone
 				                                     : BootMode::Rhythm;
 				webui_.Init();
+				gWebUI = &webui_;
+				gUsbReady = true;      // releases core 1
 				voices_.init(AnySamples());
 				engines_[mode_]->reset(0xB10Du);
 				// Swallow the release of the boot hold.
@@ -92,16 +127,7 @@ public:
 			return;
 		}
 
-		// ---- USB / sample upload ----------------------------------------
-		// Poll USB every control tick. NOTE this lands on the SAME sample as
-		// the control tick below, so their costs add — and tud_task() is not
-		// bounded, which makes it a prime suspect for an overrun.
-		if (ctrlDiv_ == 0)
-		{
-			BIO_PROFILE_SCOPE(Usb);
-			webui_.Task();
-		}
-
+		// USB is serviced on core 1; nothing to do here. See core1Entry.
 		if (webui_.Uploading())
 		{
 			// Flash writes stall execution, so there is no point pretending the
@@ -145,11 +171,19 @@ public:
 		// on the sample where it fires, the whole engine must still finish
 		// within this one 20.83us slot. Build with -DBIO_PROFILE=ON to see
 		// what that actually costs.
-		if (++ctrlDiv_ >= kCtrlDiv)
+		// The engine and the LED/UI housekeeping used to run on the SAME sample,
+		// stacking their costs into one peak. They are now offset by half the
+		// divider, so each gets its own sample. Same rates, lower worst case.
+		if (++ctrlDiv_ >= kCtrlDiv) ctrlDiv_ = 0;
+		if (ctrlDiv_ == 0)
 		{
-			ctrlDiv_ = 0;
 			BIO_PROFILE_SCOPE(Engine);
 			controlTick();
+		}
+		else if (ctrlDiv_ == kCtrlDiv / 2)
+		{
+			BIO_PROFILE_SCOPE(Outputs);
+			uiTick();
 		}
 
 		// ---- Audio (48kHz) ----------------------------------------------
@@ -247,7 +281,7 @@ private:
 #endif
 
 	// -------------------------------------------------------------------
-	void controlTick()
+	void __not_in_flash_func(controlTick)()
 	{
 		// --- Switch: Down taps cycle the mode, Up/Middle sets routing. ---
 		Switch sw = SwitchVal();
@@ -374,33 +408,40 @@ private:
 			cvLevel_[1] = out.global;
 		}
 
-		// --- LEDs ---
-		// Six modes on six LEDs leaves none spare for an activity indicator, so
-		// the two jobs share: the mode's own LED sits at a dim "you are here"
-		// glow and flares to full on every trigger. One light, both meanings.
+		// Triggers feed the activity glow, which uiTick() renders on its own
+		// sample so the two costs do not stack.
 		if (mask) activity_ = kQ16One;
+
+		seed_ = seed_ * 1664525u + 1013904223u;
+	}
+
+	// -------------------------------------------------------------------
+	// LED housekeeping, run on a different sample from the engine so their
+	// costs never land in the same 20.8us slot.
+	void __not_in_flash_func(uiTick)()
+	{
 		activity_ = fast_exp_decay(activity_, 3);
 
 		// Leave the LEDs alone while the boot splash is still showing.
-		if (splash_ == 0)
+		if (splash_ != 0) return;
+
+		// Six modes on six LEDs leaves none spare for an activity indicator, so
+		// the two jobs share: the mode's own LED sits at a dim "you are here"
+		// glow and flares to full on every trigger. One light, both meanings.
+		for (int i = 0; i < kNumModes; i++)
 		{
-			for (int i = 0; i < kNumModes; i++)
+			if (i == mode_)
 			{
-				if (i == mode_)
-				{
-					constexpr int32_t kIdleGlow = kQ16One / 5;
-					int32_t level = kIdleGlow
-					              + mul_q16(activity_, kQ16One - kIdleGlow);
-					LedBrightness(i, static_cast<uint16_t>(level >> 4));
-				}
-				else
-				{
-					LedOff(i);
-				}
+				constexpr int32_t kIdleGlow = kQ16One / 5;
+				int32_t level = kIdleGlow
+				              + mul_q16(activity_, kQ16One - kIdleGlow);
+				LedBrightness(i, static_cast<uint16_t>(level >> 4));
+			}
+			else
+			{
+				LedOff(i);
 			}
 		}
-
-		seed_ = seed_ * 1664525u + 1013904223u;
 	}
 
 	// -------------------------------------------------------------------
@@ -411,7 +452,7 @@ private:
 	// herd. Audio In 2 is DISTURBANCE — the same signal differentiated, so it
 	// responds to transients rather than level, which is what actually alarms an
 	// animal. Both only act when something is patched in.
-	void listen()
+	void __not_in_flash_func(listen)()
 	{
 		if (Connected(Input::Audio1))
 		{
@@ -439,7 +480,7 @@ private:
 
 	// -------------------------------------------------------------------
 	// 48kHz: run down the gate widths and hold the CV outs.
-	void serviceOutputs()
+	void __not_in_flash_func(serviceOutputs)()
 	{
 		// Pulse ins are edge-detected at audio rate so a short trigger is never
 		// missed between control ticks.
