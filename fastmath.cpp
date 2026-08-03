@@ -1,14 +1,17 @@
-// fastmath.cpp — generated tables for fastmath.h.
+// fastmath.cpp - generated tables for fastmath.h.
 //
 // kSinTable: quarter-wave sine, Q15. 257 entries (the extra one lets the
 // interpolator read idx+1 unconditionally). Generated as:
 //   round(32767 * sin((i/256) * (pi/2)))  for i in 0..256
 
 #include "fastmath.h"
+#include "pico.h"   // __not_in_flash
 
 namespace bio {
 
-const int16_t kSinTable[257] = {
+// In RAM: read on every fast_sin() call from the 48kHz path, where an XIP
+// miss costs ~100 cycles.
+const int16_t __not_in_flash("sintab") kSinTable[257] = {
 	0, 201, 402, 603, 804, 1005, 1206, 1407,
 	1608, 1809, 2009, 2210, 2410, 2611, 2811, 3012,
 	3212, 3412, 3612, 3811, 4011, 4210, 4410, 4609,

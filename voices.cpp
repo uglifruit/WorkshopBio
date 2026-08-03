@@ -5,6 +5,7 @@
 // from the ecosystem rather than from a knob.
 
 #include "voices.h"
+#include "pico.h"   // __not_in_flash_func
 #include "samplestore.h"       // user flash region, with baked fallback
 
 namespace bio {
@@ -142,7 +143,7 @@ void VoiceBank::init(bool usePcm)
 	}
 }
 
-void VoiceBank::selectVariantAndPan(Voice &v, int agent, Mode m, uint8_t member)
+void __not_in_flash_func(VoiceBank::selectVariantAndPan)(Voice &v, int agent, Mode m, uint8_t member)
 {
 	int mi = static_cast<int>(m);
 
@@ -185,7 +186,7 @@ void VoiceBank::selectVariantAndPan(Voice &v, int agent, Mode m, uint8_t member)
 	}
 }
 
-void VoiceBank::note(int i, Mode m, int32_t accent, int32_t variation,
+void __not_in_flash_func(VoiceBank::note)(int i, Mode m, int32_t accent, int32_t variation,
                      uint8_t member)
 {
 	Voice &v = v_[i];
@@ -318,7 +319,7 @@ static const int32_t kGrainRate[kNumModes] = {
 	61000    // Cicadas — 0.93x, close to natural
 };
 
-void VoiceBank::droneUpdate(Mode m, const int32_t *state, int32_t global,
+void __not_in_flash_func(VoiceBank::droneUpdate)(Mode m, const int32_t *state, int32_t global,
                             uint8_t triggers, int active, int32_t timbre)
 {
 	int mi = static_cast<int>(m);
@@ -399,7 +400,7 @@ void VoiceBank::droneUpdate(Mode m, const int32_t *state, int32_t global,
 	}
 }
 
-void VoiceBank::droneRender(int active, int16_t &l, int16_t &r)
+void __not_in_flash_func(VoiceBank::droneRender)(int active, int16_t &l, int16_t &r)
 {
 	int32_t accL = 0, accR = 0;
 
@@ -445,7 +446,7 @@ void VoiceBank::droneRender(int active, int16_t &l, int16_t &r)
 	r = clamp12(accR);
 }
 
-void VoiceBank::render(int active, int16_t &l, int16_t &r)
+void __not_in_flash_func(VoiceBank::render)(int active, int16_t &l, int16_t &r)
 {
 	int32_t accL = 0, accR = 0;
 

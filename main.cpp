@@ -49,7 +49,7 @@ public:
 		engines_[5] = &cicadas_;
 	}
 
-	virtual void ProcessSample()
+	virtual void __not_in_flash_func(ProcessSample)()
 	{
 		// Times the WHOLE callback, which is the number that decides whether
 		// audio glitches — not the per-sample average.

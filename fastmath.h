@@ -133,4 +133,33 @@ static inline int32_t __attribute__((always_inline)) knob_to_q16(int32_t knob)
 	return knob << 4;
 }
 
+// ---------------------------------------------------------------------------
+// Rate -> phase increment
+// ---------------------------------------------------------------------------
+
+/// Convert a Q8 frequency (Hz * 256) into a phase increment at the control rate.
+///
+/// The obvious form is
+///     (int64_t)hz_q8 * 4294967296LL / (256LL * kCtrlRate)
+/// and it is what this code used to do — in three places, one of them inside a
+/// twelve-iteration loop. **That was the single biggest cause of the card
+/// overrunning its 20.8us sample budget by 4-8x.** The Cortex-M0+ has no
+/// hardware divider at all, so a 64-bit divide is a libgcc call costing several
+/// hundred cycles, and the compiler cannot strength-reduce it because the
+/// numerator is 64-bit.
+///
+/// Dividing by the compile-time constant 256*1500 = 384000 is the same as
+/// multiplying by 2^32/384000, which is precomputed here as a Q16 constant.
+/// The result is EXACT over the whole useful range (verified against the
+/// integer division for 115..20000 Q8 Hz), and costs one 64-bit multiply
+/// instead of a divide.
+constexpr uint32_t kHzToIncQ16 = 733007752u;    // round(2^32 / 384000 * 65536)
+
+static inline uint32_t __attribute__((always_inline)) hz_to_inc(int32_t hz_q8)
+{
+	if (hz_q8 < 0) hz_q8 = 0;
+	return static_cast<uint32_t>(
+		(static_cast<uint64_t>(static_cast<uint32_t>(hz_q8)) * kHzToIncQ16) >> 16);
+}
+
 } // namespace bio

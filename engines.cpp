@@ -6,8 +6,15 @@
 // puts out as CV.
 
 #include "engines.h"
+#include "pico.h"   // __not_in_flash_func
 
 namespace bio {
+
+// hz_to_inc()'s constant is precomputed for this control rate. If kCtrlDiv
+// changes, kHzToIncQ16 in fastmath.h must be recomputed as
+// round(2^32 / (256 * kCtrlRate) * 65536).
+static_assert(kCtrlRate == 1500,
+              "kHzToIncQ16 in fastmath.h is precomputed for kCtrlRate == 1500");
 
 // ===========================================================================
 // Mode 1 — Horses: phase-drifting clocks + gaits
@@ -109,7 +116,7 @@ void HorsesEngine::reset(uint32_t seed)
 	}
 }
 
-void HorsesEngine::tick(const Ctrl &c, EngineOut &out)
+void __not_in_flash_func(HorsesEngine::tick)(const Ctrl &c, EngineOut &out)
 {
 	out.triggers = 0;
 
@@ -151,8 +158,7 @@ void HorsesEngine::tick(const Ctrl &c, EngineOut &out)
 		}
 	}
 
-	uint32_t baseInc = static_cast<uint32_t>(
-		(static_cast<int64_t>(hz_q8) * 4294967296LL) / (256LL * kCtrlRate));
+	uint32_t baseInc = hz_to_inc(hz_q8);
 
 	// One horse per output channel. Each keeps ALL FOUR hooves — a horse with
 	// three legs is not a smaller herd — and runs its own stride clock, so the
@@ -237,7 +243,7 @@ void GeeseEngine::reset(uint32_t seed)
 	for (int i = 0; i < kSwarmSize; i++) { excite_[i] = 0; refractory_[i] = 0; }
 }
 
-void GeeseEngine::tick(const Ctrl &c, EngineOut &out)
+void __not_in_flash_func(GeeseEngine::tick)(const Ctrl &c, EngineOut &out)
 {
 	out.triggers = 0;
 
@@ -335,6 +341,9 @@ void GeeseEngine::tick(const Ctrl &c, EngineOut &out)
 			if (fired & (1u << i)) out.triggers |= (1 << a);
 			groupExcite += excite_[i];
 		}
+		// Left as a real divide: it runs 4 times per tick, not 12, and the
+		// exact reciprocal for this range needs a 64-bit intermediate, which
+		// would cost more than the divide it replaces.
 		out.state[a] = groupExcite / kSwarmPerAgent;
 	}
 
@@ -371,7 +380,7 @@ void FrogsEngine::reset(uint32_t seed)
 	}
 }
 
-void FrogsEngine::tick(const Ctrl &c, EngineOut &out)
+void __not_in_flash_func(FrogsEngine::tick)(const Ctrl &c, EngineOut &out)
 {
 	out.triggers = 0;
 
@@ -395,8 +404,7 @@ void FrogsEngine::tick(const Ctrl &c, EngineOut &out)
 		if (clockHz_q8 > 32 && clockHz_q8 < 8192) baseHz_q8 = clockHz_q8;
 	}
 
-	int32_t baseInc = static_cast<int32_t>(
-		(static_cast<int64_t>(baseHz_q8) * 4294967296LL) / (256LL * kCtrlRate));
+	int32_t baseInc = static_cast<int32_t>(hz_to_inc(baseHz_q8));
 
 	// Knob Main INVERSELY controls coupling: 0.0 = maximum K (locked sync),
 	// 1.0 = K of zero (every frog for itself).
@@ -534,7 +542,7 @@ void RainEngine::reset(uint32_t seed)
 	for (int i = 0; i < kNumAgents; i++) level_[i] = 0;
 }
 
-void RainEngine::tick(const Ctrl &c, EngineOut &out)
+void __not_in_flash_func(RainEngine::tick)(const Ctrl &c, EngineOut &out)
 {
 	out.triggers = 0;
 
@@ -564,7 +572,7 @@ void RainEngine::tick(const Ctrl &c, EngineOut &out)
 	// that actually shapes this model: a slow leak lets buckets accumulate into
 	// heavy irregular drips, a fast leak keeps only the strongest bursts alive.
 	// (Chaos 0 = shift 10, slow drain; chaos 1 = shift 7, fast drain.)
-	int32_t leakBase = 10 - (c.chaos * 3 / kQ16One);
+	int32_t leakBase = 10 - ((c.chaos * 3) >> 16);   // /kQ16One
 
 	int32_t splash[kNumAgents] = { 0, 0, 0, 0 };
 	int32_t sum = 0;
@@ -620,7 +628,7 @@ void MeteorsEngine::reset(uint32_t seed)
 	untilNewTarget_ = 1;
 }
 
-void MeteorsEngine::tick(const Ctrl &c, EngineOut &out)
+void __not_in_flash_func(MeteorsEngine::tick)(const Ctrl &c, EngineOut &out)
 {
 	out.triggers = 0;
 
@@ -725,7 +733,7 @@ void CicadasEngine::reset(uint32_t seed)
 	}
 }
 
-void CicadasEngine::tick(const Ctrl &c, EngineOut &out)
+void __not_in_flash_func(CicadasEngine::tick)(const Ctrl &c, EngineOut &out)
 {
 	out.triggers = 0;
 
@@ -782,12 +790,16 @@ void CicadasEngine::tick(const Ctrl &c, EngineOut &out)
 
 	int32_t called[kPatches] = { 0, 0, 0, 0 };
 	uint32_t fired = 0;
+	int patch = 0, patchCount = -1;
 	for (int i = 0; i < swarm; i++)
 	{
 		// An insect mostly hears its own patch, and only faintly the rest of
 		// the field. That weak coupling is what lets patches swell out of step
 		// instead of the whole population charging and discharging as one.
-		int patch = i / kPerPatch;
+		//
+		// Walked rather than divided: the M0+ has no divider, and `i / kPerPatch`
+		// here cost a libgcc call on every one of the twelve iterations.
+		if (++patchCount >= kPerPatch) { patchCount = 0; patch++; }
 		int32_t drive = (patchField_[patch] * 3 + globalField) >> 2;
 
 		int32_t rateScale = kQ16One + mul_q16(mul_q16(drive, coupling), kQ16One) * 6;
@@ -795,7 +807,7 @@ void CicadasEngine::tick(const Ctrl &c, EngineOut &out)
 
 		// Fatigue slows an insect right down rather than silencing it outright,
 		// so the field thins out gradually instead of switching off.
-		int32_t tired = kQ16One - (fatigue_[i] * 3 / 4);
+		int32_t tired = kQ16One - (fatigue_[i] - (fatigue_[i] >> 2));  // *3/4
 		// Its own natural rate, then scaled by how tired it is. The per-insect
 		// tempo is what stops the twelve locking into unison.
 		int32_t myHz = mul_q16(mul_q16(hz_q8, tempo_[i]), tired);
@@ -809,8 +821,7 @@ void CicadasEngine::tick(const Ctrl &c, EngineOut &out)
 		}
 		if (myHz < 16) myHz = 16;
 
-		uint32_t inc = static_cast<uint32_t>(
-			(static_cast<int64_t>(myHz) * 4294967296LL) / (256LL * kCtrlRate));
+		uint32_t inc = hz_to_inc(myHz);
 
 		uint32_t before = phase_[i];
 		phase_[i] += inc;
