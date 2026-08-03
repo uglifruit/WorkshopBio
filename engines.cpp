@@ -705,10 +705,23 @@ void CicadasEngine::reset(uint32_t seed)
 {
 	rng_ = seed | 1u;
 	field_ = 0;
+	for (int p = 0; p < kPatches; p++) patchField_[p] = 0;
 	for (int i = 0; i < kSwarmSize; i++)
 	{
 		phase_[i] = xorshift32(rng_);
 		fatigue_[i] = 0;
+		// Every insect gets its own constitution: how quickly it tires and how
+		// long it needs to recover. Fixed per insect rather than re-rolled, so
+		// the field has a stable cast of individuals — some that keep going and
+		// some that drop out early — instead of twelve identical machines.
+		recover_[i] = static_cast<uint8_t>(11 + (xorshift32(rng_) % 3));  // 11..13
+		stamina_[i] = static_cast<int32_t>(kQ16One / 2
+		            + (xorshift32(rng_) % kQ16One));                      // 0.5..1.5x
+		// Spread the natural rates over roughly 0.65x..1.55x. Wide, because a
+		// narrow spread still entrains: the shared field steers everyone the
+		// same way, and only a real difference in rate keeps them apart.
+		tempo_[i] = static_cast<int32_t>((kQ16One * 42) / 64
+		          + (xorshift32(rng_) % ((kQ16One * 58) / 64)));
 	}
 }
 
@@ -726,8 +739,12 @@ void CicadasEngine::tick(const Ctrl &c, EngineOut &out)
 
 	// Pulse In 2 nudges the field louder on each beat, so the swells lean
 	// toward an external tempo.
-	if (c.clock) field_ = (field_ + kQ16One / 4 > kQ16One) ? kQ16One
-	                                                       : field_ + kQ16One / 4;
+	if (c.clock)
+		for (int p = 0; p < kPatches; p++)
+		{
+			patchField_[p] += kQ16One / 4;
+			if (patchField_[p] > kQ16One) patchField_[p] = kQ16One;
+		}
 
 	// Cicadas are the shyest thing on the card: a loud room shuts them up.
 	// Audio In 1's envelope goes straight into fatigue, so the field thins as
@@ -758,17 +775,30 @@ void CicadasEngine::tick(const Ctrl &c, EngineOut &out)
 	// into waves, not remove it — the peaks stay loud, the troughs go quiet.
 	constexpr int32_t kBaseHz_q8 = 600;   // ~2.3 Hz
 	int32_t base = kBaseHz_q8 + mul_q16(kBaseHz_q8 * 5 / 4, coupling);
-	int32_t rateScale = kQ16One + mul_q16(mul_q16(field_, coupling), kQ16One) * 6;
-	int32_t hz_q8 = mul_q16(base << 4, rateScale) >> 4;
+	// Mean across patches, used only where the whole field matters.
+	int32_t globalField = 0;
+	for (int p = 0; p < kPatches; p++) globalField += patchField_[p];
+	globalField /= kPatches;
 
-	int32_t called = 0;
+	int32_t called[kPatches] = { 0, 0, 0, 0 };
 	uint32_t fired = 0;
 	for (int i = 0; i < swarm; i++)
 	{
+		// An insect mostly hears its own patch, and only faintly the rest of
+		// the field. That weak coupling is what lets patches swell out of step
+		// instead of the whole population charging and discharging as one.
+		int patch = i / kPerPatch;
+		int32_t drive = (patchField_[patch] * 3 + globalField) >> 2;
+
+		int32_t rateScale = kQ16One + mul_q16(mul_q16(drive, coupling), kQ16One) * 6;
+		int32_t hz_q8 = mul_q16(base << 4, rateScale) >> 4;
+
 		// Fatigue slows an insect right down rather than silencing it outright,
 		// so the field thins out gradually instead of switching off.
 		int32_t tired = kQ16One - (fatigue_[i] * 3 / 4);
-		int32_t myHz = mul_q16(hz_q8, tired);
+		// Its own natural rate, then scaled by how tired it is. The per-insect
+		// tempo is what stops the twelve locking into unison.
+		int32_t myHz = mul_q16(mul_q16(hz_q8, tempo_[i]), tired);
 
 		// Chaos spreads the natural rates so the swarm never sounds like one
 		// insect multiplied.
@@ -787,32 +817,42 @@ void CicadasEngine::tick(const Ctrl &c, EngineOut &out)
 
 		if (phase_[i] < before)          // wrapped: this insect called
 		{
-			called++;
+			called[patch]++;
 			fired |= (1u << i);
-			fatigue_[i] += mul_q16(kQ16One / 2, coupling);   // calling is work
+			// Calling is work — and some insects tire faster than others.
+			fatigue_[i] += mul_q16(mul_q16(kQ16One / 2, coupling), stamina_[i]);
 			if (fatigue_[i] > kQ16One) fatigue_[i] = kQ16One;
 		}
 
-		// The negative half of the loop: simply BEING in a loud field is
+		// The negative half of the loop: simply BEING in a loud patch is
 		// tiring, whether or not this insect called. Without this the swarm
 		// spread itself evenly and never surged — collective exhaustion is what
 		// turns feedback into a wave rather than a runaway.
-		fatigue_[i] += mul_q16(mul_q16(field_, coupling), kQ16One / 150);
+		fatigue_[i] += mul_q16(mul_q16(drive, coupling), kQ16One / 150);
 		if (fatigue_[i] > kQ16One) fatigue_[i] = kQ16One;
 
 		// Recovery is slow — slower than the build-up, which is what sets the
-		// period of the swell.
-		fatigue_[i] = fast_exp_decay(fatigue_[i], 12);
+		// period of the swell. Per-insect, so they do not all come back at once.
+		fatigue_[i] = fast_exp_decay(fatigue_[i], recover_[i]);
 	}
 
-	// The field is the perceived loudness of the whole chorus: it rises quickly
-	// as insects join and falls away slowly, so the swarm hears its own recent
-	// past rather than only the current instant.
-	int32_t instant = (swarm > 0)
-		? (called * kQ16One * 8 / swarm) : 0;
-	if (instant > kQ16One) instant = kQ16One;
-	field_ = (instant > field_) ? slew(field_, instant, 4)
-	                            : slew(field_, instant, 8);
+	// Each patch's field is the perceived loudness of ITS insects: it rises
+	// quickly as they join and falls away slowly, so a patch hears its own
+	// recent past rather than only the current instant.
+	int32_t sumField = 0;
+	int activePatches = 0;
+	for (int p = 0; p < kPatches; p++)
+	{
+		if (p * kPerPatch >= swarm) { patchField_[p] = 0; continue; }
+		int32_t instant = called[p] * kQ16One * 8 / kPerPatch;
+		if (instant > kQ16One) instant = kQ16One;
+		patchField_[p] = (instant > patchField_[p])
+			? slew(patchField_[p], instant, 4)
+			: slew(patchField_[p], instant, 8);
+		sumField += patchField_[p];
+		activePatches++;
+	}
+	field_ = activePatches ? (sumField / activePatches) : 0;
 
 	// Fold the swarm onto the outputs: a channel fires if any of its insects
 	// called, and carries its group's mean fatigue as state CV.

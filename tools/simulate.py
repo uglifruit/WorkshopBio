@@ -401,13 +401,24 @@ def meteors(physics, chaos, pop, ticks, spook_every=0, clock_period=0):
 # Mode 6: Cicadas - density-dependent chorus (amplitude coupling)
 # ===========================================================================
 def cicadas(physics, chaos, pop, ticks, spook_every=0, clock_period=0):
+    """Patched chorus: 4 patches of 3, each hearing mostly itself.
+
+    One shared field made this a relaxation oscillator - everyone recovers,
+    everyone calls, everyone tires, repeat - which sounded like a gallop.
+    Patches swell out of step, so the whole field is irregular.
+    """
+    PATCHES, PER = 4, 3
     rng = 0x1234 | 1
-    phase = []
+    phase, rec, sta, tem = [], [], [], []
     for _ in range(SWARM_SIZE):
         rng = xorshift(rng)
         phase.append(rng)
+    for _ in range(SWARM_SIZE):
+        rng = xorshift(rng); rec.append(11 + (rng % 3))
+        rng = xorshift(rng); sta.append(Q // 2 + (rng % Q))
+        rng = xorshift(rng); tem.append(Q * 42 // 64 + (rng % (Q * 58 // 64)))
     fat = [0] * SWARM_SIZE
-    field = 0
+    pf = [0] * PATCHES
     fires = [0] * 4
     swarm = pop * SWARM_PER_AGENT
     for t in range(ticks):
@@ -415,15 +426,19 @@ def cicadas(physics, chaos, pop, ticks, spook_every=0, clock_period=0):
             for i in range(swarm):
                 fat[i] = Q
         if clock_period and t % clock_period == 0 and t:
-            field = min(field + Q // 4, Q)
+            for p in range(PATCHES):
+                pf[p] = min(pf[p] + Q // 4, Q)
         base = 600 + mul_q16(600 * 5 // 4, physics)
-        rate = Q + mul_q16(mul_q16(field, physics), Q) * 6
-        hz = mul_q16(base << 4, rate) >> 4
-        called = 0
+        glob = sum(pf) // PATCHES
+        called = [0] * PATCHES
         fired = 0
         for i in range(swarm):
+            p = i // PER
+            drive = (pf[p] * 3 + glob) >> 2
+            rs = Q + mul_q16(mul_q16(drive, physics), Q) * 6
+            hz = mul_q16(base << 4, rs) >> 4
             tired = Q - (fat[i] * 3 // 4)
-            my = mul_q16(hz, tired)
+            my = mul_q16(mul_q16(hz, tem[i]), tired)
             if chaos:
                 rng, rb = rand_bipolar(rng)
                 my += (my >> 3) * mul_q16(rb << 1, chaos) >> 15
@@ -432,13 +447,17 @@ def cicadas(physics, chaos, pop, ticks, spook_every=0, clock_period=0):
             b = phase[i]
             phase[i] = (phase[i] + inc) & MASK32
             if phase[i] < b:
-                called += 1
+                called[p] += 1
                 fired |= 1 << i
-                fat[i] = min(fat[i] + mul_q16(Q // 2, physics), Q)
-            fat[i] = min(fat[i] + mul_q16(mul_q16(field, physics), Q // 150), Q)
-            fat[i] = decay(fat[i], 12)
-        inst = min(called * Q * 8 // swarm, Q) if swarm else 0
-        field = slew(field, inst, 4) if inst > field else slew(field, inst, 8)
+                fat[i] = min(fat[i] + mul_q16(mul_q16(Q // 2, physics), sta[i]), Q)
+            fat[i] = min(fat[i] + mul_q16(mul_q16(drive, physics), Q // 150), Q)
+            fat[i] = decay(fat[i], rec[i])
+        for p in range(PATCHES):
+            if p * PER >= swarm:
+                pf[p] = 0
+                continue
+            inst = min(called[p] * Q * 8 // PER, Q)
+            pf[p] = slew(pf[p], inst, 4) if inst > pf[p] else slew(pf[p], inst, 8)
         for a in range(pop):
             for k in range(SWARM_PER_AGENT):
                 if fired & (1 << (a * SWARM_PER_AGENT + k)):
@@ -448,35 +467,45 @@ def cicadas(physics, chaos, pop, ticks, spook_every=0, clock_period=0):
 
 
 def cicadas_swing(physics, secs=30):
-    """How deeply the field swells and subsides - the point of the mode."""
+    """Swing of ONE patch. The mean across patches is deliberately flat: the
+    patches swell independently (correlation ~0.01), and that cancellation is
+    exactly what stops the field pulsing like a gallop."""
+    PATCHES, PER = 4, 3
     rng = 0x1234 | 1
-    phase = []
+    phase, rec, sta, tem = [], [], [], []
     for _ in range(SWARM_SIZE):
         rng = xorshift(rng)
         phase.append(rng)
+    for _ in range(SWARM_SIZE):
+        rng = xorshift(rng); rec.append(11 + (rng % 3))
+        rng = xorshift(rng); sta.append(Q // 2 + (rng % Q))
+        rng = xorshift(rng); tem.append(Q * 42 // 64 + (rng % (Q * 58 // 64)))
     fat = [0] * SWARM_SIZE
-    field = 0
+    pf = [0] * PATCHES
     hist = []
-    swarm = SWARM_SIZE
     for t in range(secs * CTRL):
         base = 600 + mul_q16(600 * 5 // 4, physics)
-        rate = Q + mul_q16(mul_q16(field, physics), Q) * 6
-        hz = mul_q16(base << 4, rate) >> 4
-        called = 0
-        for i in range(swarm):
+        glob = sum(pf) // PATCHES
+        called = [0] * PATCHES
+        for i in range(SWARM_SIZE):
+            p = i // PER
+            drive = (pf[p] * 3 + glob) >> 2
+            rs = Q + mul_q16(mul_q16(drive, physics), Q) * 6
+            hz = mul_q16(base << 4, rs) >> 4
             tired = Q - (fat[i] * 3 // 4)
-            my = max(mul_q16(hz, tired), 16)
+            my = max(mul_q16(mul_q16(hz, tem[i]), tired), 16)
             inc = (my * (1 << 32)) // (256 * CTRL)
             b = phase[i]
             phase[i] = (phase[i] + inc) & MASK32
             if phase[i] < b:
-                called += 1
-                fat[i] = min(fat[i] + mul_q16(Q // 2, physics), Q)
-            fat[i] = min(fat[i] + mul_q16(mul_q16(field, physics), Q // 150), Q)
-            fat[i] = decay(fat[i], 12)
-        inst = min(called * Q * 8 // swarm, Q)
-        field = slew(field, inst, 4) if inst > field else slew(field, inst, 8)
-        hist.append(field)
+                called[p] += 1
+                fat[i] = min(fat[i] + mul_q16(mul_q16(Q // 2, physics), sta[i]), Q)
+            fat[i] = min(fat[i] + mul_q16(mul_q16(drive, physics), Q // 150), Q)
+            fat[i] = decay(fat[i], rec[i])
+        for p in range(PATCHES):
+            inst = min(called[p] * Q * 8 // PER, Q)
+            pf[p] = slew(pf[p], inst, 4) if inst > pf[p] else slew(pf[p], inst, 8)
+        hist.append(pf[0])
     seg = hist[CTRL * 5:]
     return min(seg) / Q, max(seg) / Q
 

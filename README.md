@@ -35,7 +35,7 @@ Tap the momentary switch (Down) to cycle habitats. Each has its own internal log
 | **Frogs** | Coupled oscillators | The Kuramoto model. Voices pull on each other's timing, fighting between perfect metronomic synchronisation and chaotic swarms — and they'll entrain to an external clock if you give them one. |
 | **Rain** | Leaky integrate-and-fire | Buckets fill with noise and constantly leak. An overflow **splashes downstream** into the next bucket, so drips pull each other along into rushing clusters, then fall apart. |
 | **Meteors** | Inhomogeneous Poisson | An invisible slow-moving weather system dictates the density of a **swarm of twelve**. Long eerie silences swell smoothly into heavy overlapping barrages. |
-| **Cicadas** | Amplitude feedback | A field of twelve insects that call faster the louder the field already is — and tire from being in it. That loop produces the slow pulsing waves of loudness a real cicada field makes. Where Frogs couple on *phase* and Geese on *events*, Cicadas couple on *loudness*. |
+| **Cicadas** | Amplitude feedback | Twelve insects in **four patches**, each hearing mostly its own neighbours. They call faster the louder their patch already is, and tire from being in it. Patches swell out of step with each other, so the field surges and subsides irregularly. Where Frogs couple on *phase* and Geese on *events*, Cicadas couple on *loudness*. |
 
 ### The gaits are real
 

@@ -108,7 +108,28 @@ public:
 private:
 	uint32_t phase_[kSwarmSize];    // each insect's call cycle
 	int32_t  fatigue_[kSwarmSize];  // Q16, rises with calling, forces a rest
-	int32_t  field_;                // Q16, the perceived loudness of the chorus
+	// Per-insect constitution. Without these every insect tired and recovered at
+	// exactly the same rate, so the field locked into a metronomic pulse —
+	// clusters every 0.32s with 0.01s of variance, which reads as a gallop
+	// rather than a cicada field. Real insects differ, and that spread is what
+	// keeps the swelling irregular.
+	uint8_t  recover_[kSwarmSize];  // fatigue decay shift, 11..13
+	int32_t  stamina_[kSwarmSize];  // Q16 scale on how fast fatigue accrues
+	// Per-insect NATURAL RATE. This is the one that matters: with a single
+	// shared rate law the twelve phases converged to R=0.88 within five seconds
+	// and stayed there, so every insect called at the same instant and the
+	// field pulsed like a gallop. Detuning them is what keeps a chorus a chorus.
+	int32_t  tempo_[kSwarmSize];    // Q16 multiplier on the base call rate
+
+	// PATCHES. One shared field made the whole model a relaxation oscillator:
+	// everyone recovers, everyone calls, everyone tires, repeat — one period,
+	// which is why it read as a gallop. Splitting the field into patches that
+	// hear mostly themselves lets them swell out of step with each other, and
+	// that is what makes the swelling irregular rather than metronomic.
+	static constexpr int kPatches = 4;
+	static constexpr int kPerPatch = kSwarmSize / kPatches;
+	int32_t  patchField_[kPatches]; // Q16 local loudness
+	int32_t  field_;                // Q16 mean across patches, for the CV out
 	uint32_t rng_;
 };
 
