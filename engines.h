@@ -27,6 +27,9 @@ private:
 	int32_t  speed_[kNumAgents];      // per-horse rate offset, Q16 around 1.0
 	int32_t  jitter_[kNumAgents][kNumAgents];  // [horse][hoof] timing offset
 	uint8_t  lastStep_[kNumAgents][kNumAgents];
+	// Countdown for the second foot of a "simultaneous" pair, so trot and
+	// canter flam instead of summing two clops into one.
+	int16_t  pending_[kNumAgents][kNumAgents];
 	uint8_t  lastGait_;
 	uint32_t rng_;
 };
@@ -56,8 +59,11 @@ public:
 	void reset(uint32_t seed) override;
 	void tick(const Ctrl &c, EngineOut &out) override;
 private:
-	uint32_t phase_[kNumAgents];
-	int32_t  natural_[kNumAgents];  // per-agent natural frequency increment
+	// A pond of kSwarmSize frogs folded onto the four outputs. Four voices could
+	// lock or scatter but never sounded like a chorus; twelve do, and the
+	// Kuramoto order parameter is far more legible with a real population.
+	uint32_t phase_[kSwarmSize];
+	int32_t  natural_[kSwarmSize];  // per-frog natural frequency increment
 	uint32_t clockPhase_;           // phantom oscillator tracking Pulse In 2
 	uint32_t rng_;
 };

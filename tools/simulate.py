@@ -86,6 +86,15 @@ GAIT_OFFSET = [
     [0, 13763, 6554, 20315],    # gallop 4-beat rotary + float
 ]
 HORSE_SPEED = [65536, 63700, 67600, 62000]
+# Flam in control ticks for the second foot of a "simultaneous" pair. Two
+# identical clops on the same sample sum into one louder clop, so trot and
+# canter audibly halved in density until these were added.
+FLAM_TICKS = [
+    [0, 0, 0, 0],     # walk   - already four distinct landings
+    [0, 27, 0, 18],   # trot
+    [0, 24, 0, 0],    # canter
+    [0, 0, 0, 0],     # gallop - already four distinct landings
+]
 GAIT_HZ_MIN = [115, 205, 300, 380]
 GAIT_HZ_MAX = [205, 330, 420, 640]
 GAIT_NAME = ["Walk", "Trot", "Canter", "Gallop"]
@@ -106,6 +115,7 @@ def horses(physics, chaos, pop, ticks, spook_every=0, clock_period=0):
     stride = [h * 0x30000000 for h in range(4)]
     last = [[0xFF] * 4 for _ in range(4)]
     jit = [[0] * 4 for _ in range(4)]
+    pend = [[0] * 4 for _ in range(4)]
     fires = [0] * 4
     for t in range(ticks):
         if spook_every and t % spook_every == 0 and t:
@@ -122,8 +132,15 @@ def horses(physics, chaos, pop, ticks, spook_every=0, clock_period=0):
                     hp = (hp + (jit[h][i] << 10)) & MASK32
                 step = hp >> 28
                 if step == 0 and last[h][i] != 0:
-                    fires[h] += 1
+                    if FLAM_TICKS[gait][i] == 0:
+                        fires[h] += 1
+                    else:
+                        pend[h][i] = FLAM_TICKS[gait][i]
                 last[h][i] = step
+                if pend[h][i] > 0:
+                    pend[h][i] -= 1
+                    if pend[h][i] == 0:
+                        fires[h] += 1
     return fires
 
 

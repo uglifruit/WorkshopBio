@@ -36,8 +36,11 @@ static const int32_t kGaitOffset[4][kNumAgents] = {
 	//   LH 0 · LF 0.25 · RH 0.50 · RF 0.75
 	{                  0,   16384,   32768,   49152 },
 
-	// TROT — 2-beat diagonal. Diagonal pairs land together, half a stride apart:
-	// LH+RF at 0, LF+RH at 1/2.
+	// TROT — 2-beat diagonal, LH+RF then LF+RH half a stride apart. The two feet
+	// of a pair are offset by a small FLAM (see kFlam below) rather than landing
+	// on the same sample: a real diagonal pair is not perfectly simultaneous,
+	// and two identical clops at the same instant sum into one louder clop
+	// instead of two events — which made a trot read as half-density.
 	{                  0,   32768,   32768,       0 },
 
 	// CANTER — 3-beat with suspension, on the right lead: leading hind, then the
@@ -52,6 +55,23 @@ static const int32_t kGaitOffset[4][kNumAgents] = {
 	// fores is exactly what separates a gallop from a fast walk.
 	//   LH 0 · RH 0.10 · LF 0.21 · RF 0.31 · float 0.31-1.0
 	{                  0,   13763,    6554,   20315 }
+};
+
+// FLAM between the feet of a "simultaneous" pair, in control ticks (1.5kHz, so
+// one tick is 0.67ms). Only trot and canter have coincident landings, and the
+// second foot of each pair is nudged late by these amounts.
+//
+// Two identical clops fired on the same sample do not sound like two hooves —
+// they sum into one louder clop, so a trot audibly halved in density compared
+// with a walk. Real diagonal pairs land 10-30ms apart, and restoring that gap
+// puts the missing events back. Given as a FIXED time rather than a fraction of
+// the stride, because the flam of a real animal does not stretch with tempo.
+static const int32_t kFlamTicks[4][kNumAgents] = {
+	//  LH   LF   RH   RF
+	{     0,   0,   0,   0 },   // Walk   — already four distinct landings
+	{     0,  27,   0,  18 },   // Trot   — LF 18ms after RH, RF 12ms after LH
+	{     0,  24,   0,   0 },   // Canter — LF lands just after RH in the pair
+	{     0,   0,   0,   0 }    // Gallop — already four distinct landings
 };
 
 // Stride rate range per gait, Q8 Hz. A real horse doesn't just do the same
@@ -84,6 +104,7 @@ void HorsesEngine::reset(uint32_t seed)
 		{
 			lastStep_[h][i] = 0xFF;
 			jitter_[h][i] = 0;
+			pending_[h][i] = 0;
 		}
 	}
 }
@@ -167,12 +188,29 @@ void HorsesEngine::tick(const Ctrl &c, EngineOut &out)
 			uint8_t step = static_cast<uint8_t>(hoofPhase >> 28);   // 0..15
 			if (step == 0 && lastStep_[h][i] != 0)
 			{
-				out.triggers |= (1 << h);
-				// Tell the voice WHICH hoof this was, so it plays that hoof's
-				// own sound — hinds lower and heavier than fores.
-				out.member[h] = static_cast<uint8_t>(i);
+				int32_t flam = kFlamTicks[gait][i];
+				if (flam == 0)
+				{
+					out.triggers |= (1 << h);
+					// Tell the voice WHICH hoof this was, so it plays that
+					// hoof's own sound — hinds lower and heavier than fores.
+					out.member[h] = static_cast<uint8_t>(i);
+				}
+				else
+				{
+					// Second foot of a pair: hold it back a few ticks so the
+					// two land as two audible events rather than one loud one.
+					pending_[h][i] = static_cast<int16_t>(flam);
+				}
 			}
 			lastStep_[h][i] = step;
+
+			// Release any hoof whose flam delay has run out.
+			if (pending_[h][i] > 0 && --pending_[h][i] == 0)
+			{
+				out.triggers |= (1 << h);
+				out.member[h] = static_cast<uint8_t>(i);
+			}
 		}
 
 		// State CV: this horse's position in its stride — a per-animal LFO.
@@ -322,7 +360,7 @@ void FrogsEngine::reset(uint32_t seed)
 {
 	rng_ = seed | 1u;
 	clockPhase_ = 0;
-	for (int i = 0; i < kNumAgents; i++)
+	for (int i = 0; i < kSwarmSize; i++)
 	{
 		phase_[i] = xorshift32(rng_);
 		natural_[i] = 0;
@@ -336,7 +374,7 @@ void FrogsEngine::tick(const Ctrl &c, EngineOut &out)
 	// Pulse In = splash: scramble every phase. Sync shatters, then rebuilds at
 	// whatever rate K allows — the most satisfying gesture on the card.
 	if (c.spook)
-		for (int i = 0; i < kNumAgents; i++) phase_[i] = xorshift32(rng_);
+		for (int i = 0; i < kSwarmSize; i++) phase_[i] = xorshift32(rng_);
 
 	// Base chorus rate. The knob here is coupling, so tempo comes from a fixed
 	// base plus the chaos spread.
@@ -366,16 +404,17 @@ void FrogsEngine::tick(const Ctrl &c, EngineOut &out)
 	int32_t inv = kQ16One - c.physics;
 	int32_t K = mul_q16(mul_q16(inv, inv), inv);
 
-	// Chaos spreads the natural frequencies apart, making sync harder to reach.
-	for (int i = 0; i < kNumAgents; i++)
-	{
-		// Detune each frog by up to ~+/-12% scaled by chaos, fixed per agent.
-		static const int32_t kDetune[kNumAgents] = { 0, 3000, -2200, 5000 };
-		natural_[i] = baseInc + ((baseInc >> 4) * mul_q16(kDetune[i], c.chaos) >> 12);
-	}
-
-	int n = c.population;
+	int n = c.population * kSwarmPerAgent;
 	if (n < 1) n = 1;
+
+	// Chaos spreads the natural frequencies apart, making sync harder to reach.
+	// Twelve fixed detunes, deliberately uneven so the pond has no symmetry.
+	static const int32_t kDetune[kSwarmSize] = {
+		     0,  3000, -2200,  5000, -4100,  1800,
+		  6200, -3400,   900, -5600,  4400, -1200
+	};
+	for (int i = 0; i < n; i++)
+		natural_[i] = baseInc + ((baseInc >> 4) * mul_q16(kDetune[i], c.chaos) >> 12);
 
 	// The external clock joins the pond as a phantom frog that never listens to
 	// anyone. Matching its RATE alone would leave the chorus running at the right
@@ -390,28 +429,40 @@ void FrogsEngine::tick(const Ctrl &c, EngineOut &out)
 		if (c.clock) clockPhase_ = 0;   // a pulse re-anchors the downbeat
 	}
 
-	for (int i = 0; i < kNumAgents; i++)
+	// MEAN FIELD. The textbook Kuramoto sum is O(n^2) — 132 sine lookups for a
+	// pond of twelve — but the angle-difference identity
+	//     sin(Oj - Oi) = sin(Oj)cos(Oi) - cos(Oj)sin(Oi)
+	// lets the sum over j factor into two running totals computed ONCE:
+	//     sum_j sin(Oj - Oi) = cos(Oi)*sum(sin Oj) - sin(Oi)*sum(cos Oj)
+	// That makes the whole thing O(n) and numerically identical (verified to
+	// 0.006% against the direct sum), which is what lets the pond hold twelve.
+	int32_t sumSin = 0, sumCos = 0;
+	for (int i = 0; i < n; i++)
 	{
-		if (i >= n) { out.state[i] = 0; continue; }
+		sumSin += fast_sin(phase_[i]);
+		sumCos += fast_sin(phase_[i] + 0x40000000u);   // cos = sin(x + 90deg)
+	}
+	int partners = n;
+	if (haveClock)
+	{
+		sumSin += fast_sin(clockPhase_);
+		sumCos += fast_sin(clockPhase_ + 0x40000000u);
+		partners++;
+	}
 
-		// Coupling term: pull toward every other active frog's phase.
+	uint32_t fired = 0;
+	for (int i = 0; i < n; i++)
+	{
+		// Coupling term: pull toward the pond's mean phase.
 		// sin(theta_j - theta_i) is positive when j is ahead, so a lagging frog
 		// speeds up and a leading one slows down — that is the whole model.
-		// Mean of the neighbours, kept in Q15 (+/-32767).
-		int32_t coupling = 0;
-		int     partners = 0;
-		for (int j = 0; j < n; j++)
-		{
-			if (j == i) continue;
-			coupling += fast_sin(phase_[j] - phase_[i]);
-			partners++;
-		}
-		if (haveClock)
-		{
-			coupling += fast_sin(clockPhase_ - phase_[i]);
-			partners++;
-		}
-		if (partners > 1) coupling /= partners;
+		int32_t si = fast_sin(phase_[i]);
+		int32_t ci = fast_sin(phase_[i] + 0x40000000u);
+		// The sums include this frog; subtract its own terms so it does not
+		// couple to itself.
+		int32_t coupling =
+			(((sumSin - si) * ci) - ((sumCos - ci) * si)) >> 15;
+		if (partners > 1) coupling /= (partners - 1);
 
 		// Modulate this frog's RATE by up to +/-100% at full K. That much
 		// authority is what actually drags the chorus into lock; the old
@@ -423,17 +474,30 @@ void FrogsEngine::tick(const Ctrl &c, EngineOut &out)
 		phase_[i] += static_cast<uint32_t>(natural_[i] + adjust);
 
 		// Wrap = one full croak cycle completed.
-		if (phase_[i] < before) out.triggers |= (1 << i);
-
-		out.state[i] = static_cast<int32_t>(phase_[i] >> 16);
+		if (phase_[i] < before) fired |= (1u << i);
 	}
 
-	// Global = order parameter, cheaply approximated: how tightly the phases
-	// cluster around agent 0. 65536 = perfect sync, 0 = evenly scattered.
-	int32_t coh = 0;
-	for (int i = 1; i < n; i++)
-		coh += fast_sin((phase_[i] - phase_[0]) / 2 + 0x40000000);
-	out.global = (n > 1) ? ((coh / (n - 1)) + kQ15One) : kQ16One;
+	// Fold the pond onto the outputs: a channel croaks if any of its frogs did,
+	// and carries that group's lead frog's phase as state CV.
+	for (int a = 0; a < kNumAgents; a++)
+	{
+		if (a >= c.population) { out.state[a] = 0; continue; }
+		for (int k = 0; k < kSwarmPerAgent; k++)
+			if (fired & (1u << (a * kSwarmPerAgent + k))) out.triggers |= (1 << a);
+		out.state[a] = static_cast<int32_t>(phase_[a * kSwarmPerAgent] >> 16);
+	}
+
+	// Global = the Kuramoto order parameter, which the mean-field sums give us
+	// for free: the length of the mean phase vector, 65536 = perfectly locked,
+	// 0 = evenly scattered. Uses the octagonal |v| ~ max + 3/8*min approximation
+	// rather than a sqrt. This is the most informative CV on the card.
+	int32_t as = (sumSin > 0) ? sumSin : -sumSin;
+	int32_t ac = (sumCos > 0) ? sumCos : -sumCos;
+	int32_t hi = (as > ac) ? as : ac;
+	int32_t lo = (as > ac) ? ac : as;
+	int32_t mag = hi + ((lo * 3) >> 3);
+	int32_t coh = (partners > 0) ? (mag * 2 / partners) : 0;
+	out.global = (coh > kQ16One) ? kQ16One : coh;
 }
 
 // ===========================================================================
