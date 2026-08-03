@@ -3,6 +3,7 @@
 #include "webui.h"
 #include <string.h>
 #include "tusb.h"
+#include "profile.h"
 #include "pico/multicore.h"
 #include "hardware/flash.h"
 #include "hardware/sync.h"
@@ -281,6 +282,35 @@ void WebUI::HandleSysex(const uint8_t *msg, uint32_t len)
 		uploading_ = false;
 		SendAck(4, writeOff_);
 		break;
+
+#ifdef BIO_PROFILE
+	// Only exists in profile builds, so the released firmware is byte-identical
+	// to one built without the profiler at all. The browser treats no reply as
+	// "this card has no profiler".
+	case MSG_PROF_GET:
+	{
+		// Exact cycle counts beat asking someone to decode blinking LEDs.
+		// Each value is 3 septets (21 bits), plenty for a 2604-cycle budget.
+		uint8_t p2[2 + kNumProf * 3 + 3];
+		uint32_t o = 0;
+		p2[o++] = MSG_PROF;
+		p2[o++] = static_cast<uint8_t>(kNumProf);
+		for (int i = 0; i < kNumProf; i++)
+		{
+			uint32_t v = gProf[i].peak;
+			p2[o++] = static_cast<uint8_t>((v >> 14) & 0x7F);
+			p2[o++] = static_cast<uint8_t>((v >> 7)  & 0x7F);
+			p2[o++] = static_cast<uint8_t>( v        & 0x7F);
+		}
+		uint32_t ov = gProf[0].overruns;
+		p2[o++] = static_cast<uint8_t>((ov >> 14) & 0x7F);
+		p2[o++] = static_cast<uint8_t>((ov >> 7)  & 0x7F);
+		p2[o++] = static_cast<uint8_t>( ov        & 0x7F);
+		Send(p2, o);
+		ProfileReset();          // so each query reports a fresh window
+		break;
+	}
+#endif
 
 	case MSG_ERASE:
 		// Wipe just the header sector: the audio stays but is unreferenced, so

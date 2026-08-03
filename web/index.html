@@ -69,7 +69,19 @@
     <button id="connect">Connect</button>
     <button id="upload" class="ghost" disabled>Upload to card</button>
     <button id="revert" class="ghost" disabled>Revert to built-in</button>
+    <button id="prof" class="ghost" disabled>Read timing</button>
     <span id="status">Not connected.</span>
+  </div>
+
+  <div id="profout" hidden style="background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:1rem;margin-bottom:1.5rem">
+    <h2 style="margin:0 0 .5rem;font-size:1rem">Timing — worst case per sample</h2>
+    <p class="note" style="margin:0 0 .75rem">
+      Budget is <strong>2604 cycles</strong> (20.83&nbsp;µs at 125&nbsp;MHz).
+      Anything over that means the DMA interrupt for the next sample arrives
+      while this one is still being processed. Peaks reset on each read, so play
+      the mode you want to test, then click.
+    </p>
+    <table id="proftable"></table>
   </div>
 
   <div class="modes" id="modes"></div>
@@ -97,7 +109,12 @@ const MFR = 0x7D;
 const MSG = {
   HELLO:0x01, INFO:0x02, UP_BEGIN:0x10, UP_SLOT:0x11, UP_CHUNK:0x12,
   UP_SLOTEND:0x13, UP_END:0x14, ACK:0x15, ERR:0x16, ERASE:0x20,
+  PROF_GET:0x30, PROF:0x31,
 };
+
+// Cycles available per sample: 125MHz / 48kHz. Matches kCycleBudget in profile.h.
+const BUDGET = 2604;
+const PROF_NAMES = ["Total","Engine","Voices","Outputs","USB"];
 
 const MODES = [
   ["Horses",  "Variants are the HOOVES: 1 left hind, 2 left fore, 3 right hind, 4 right fore. Hinds strike lower and heavier than fores.", 4],
@@ -262,6 +279,7 @@ async function connect() {
       setStatus("Connected, but the card did not identify itself.", "err");
     }
     document.getElementById("upload").disabled = false;
+    document.getElementById("prof").disabled = false;
   } catch (e) {
     setStatus("WebMIDI unavailable: " + e.message, "err");
   }
@@ -332,6 +350,45 @@ async function upload() {
   }
 }
 
+// Ask the card for its worst-case cycle counts. Far better than asking a human
+// to decode blinking LEDs, which is what the first attempt at this did.
+async function readProfile() {
+  try {
+    send([MSG.PROF_GET]);
+    // A release build has no handler for this at all and simply will not
+    // answer, which is how we tell the two apart.
+    const d = await waitAck(1500).catch(() => null);
+    if (!d) {
+      setStatus("No timing data — this is a release build. Flash a " +
+                "-DBIO_PROFILE=ON build to measure.", "err");
+      return;
+    }
+    if (d[2] !== MSG.PROF) { setStatus("Unexpected reply.", "err"); return; }
+    const n = d[3];
+    const val = (i) => (d[4 + i*3] << 14) | (d[5 + i*3] << 7) | d[6 + i*3];
+    const rows = [];
+    for (let i = 0; i < n; i++) {
+      const c = val(i), pct = (c / BUDGET) * 100;
+      const over = c > BUDGET;
+      rows.push(`<tr><td>${PROF_NAMES[i] || i}</td>` +
+                `<td style="color:${over ? "var(--err)" : "var(--text)"}">` +
+                `${c} cycles</td>` +
+                `<td style="color:${over ? "var(--err)" : "var(--dim)"}">` +
+                `${pct.toFixed(1)}% of budget${over ? " — OVER" : ""}</td></tr>`);
+    }
+    const ovIdx = 4 + n*3;
+    const overruns = (d[ovIdx] << 14) | (d[ovIdx+1] << 7) | d[ovIdx+2];
+    rows.push(`<tr><td>Overruns</td><td style="color:${overruns ? "var(--err)" : "var(--accent)"}">` +
+              `${overruns}</td><td class="note">samples over budget since last read</td></tr>`);
+    document.getElementById("proftable").innerHTML = rows.join("");
+    document.getElementById("profout").hidden = false;
+    setStatus(overruns ? `${overruns} samples over budget.`
+                       : "No overruns in that window.", overruns ? "err" : "ok");
+  } catch (e) {
+    setStatus("Could not read timing: " + e.message, "err");
+  }
+}
+
 async function revert() {
   try {
     send([MSG.ERASE]);
@@ -390,6 +447,7 @@ async function load(mode, variant, file, el) {
 document.getElementById("connect").onclick = connect;
 document.getElementById("upload").onclick = upload;
 document.getElementById("revert").onclick = revert;
+document.getElementById("prof").onclick = readProfile;
 build();
 </script>
 </body>
