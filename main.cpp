@@ -93,8 +93,14 @@ public:
 		}
 
 		// ---- USB / sample upload ----------------------------------------
-		// Poll USB every control tick — cheap when nothing is connected.
-		if (ctrlDiv_ == 0) webui_.Task();
+		// Poll USB every control tick. NOTE this lands on the SAME sample as
+		// the control tick below, so their costs add — and tud_task() is not
+		// bounded, which makes it a prime suspect for an overrun.
+		if (ctrlDiv_ == 0)
+		{
+			BIO_PROFILE_SCOPE(Usb);
+			webui_.Task();
+		}
 
 		if (webui_.Uploading())
 		{
@@ -120,6 +126,10 @@ public:
 			if (--splash_ == 0)
 			{
 				for (int i = 0; i < 6; i++) LedOff(i);
+				// Start measuring only now: the boot-time voices_.init() memset
+				// is a one-off spike and would otherwise latch the overrun
+				// indicator permanently.
+				BIO_PROFILE_ARM();
 			}
 			else if (splash_ == kSplashSamples - 1)
 			{
@@ -169,30 +179,52 @@ public:
 private:
 #ifdef BIO_PROFILE
 	// -------------------------------------------------------------------
-	// Show the worst-case cost on the LEDs, so "did it ever overrun?" can be
-	// answered by eye while playing, per mode, with no scope attached.
+	// The first hardware run flashed all six LEDs in every mode, i.e. something
+	// overruns everywhere. "Everywhere" points at shared cost rather than any
+	// one engine, so the readout now CYCLES through the buckets and names the
+	// culprit instead of only saying that one exists.
 	//
-	//   LEDs lit = peak as a fraction of the 2604-cycle budget, ~16% each.
-	//   All six FLASHING = at least one sample exceeded the budget.
+	// Each bucket gets ~1.5s. Its identity is shown on the LEFT column
+	// (LEDs 0/2/4) as a 3-bit number, and its peak as a fraction of budget on
+	// the RIGHT column (LEDs 1/3/5), one LED per third. A bucket that alone
+	// exceeds budget flashes its right column.
 	//
-	// Pulse Out 2 additionally goes high for the duration of the callback, so a
-	// scope can confirm the SysTick figures independently.
+	//   left 000 = Total    001 = Engine   010 = Voices
+	//        011 = Outputs  100 = Usb
 	void profileReadout()
 	{
-		if (++profDiv_ < 2000) return;      // ~24Hz, cheap
+		if (++profDiv_ < 700) return;       // ~68Hz update
 		profDiv_ = 0;
 
-		if (ProfileOverran())
+		if (++profPhase_ >= 100)            // ~1.5s per bucket
 		{
-			profFlash_ = !profFlash_;
-			for (int i = 0; i < 6; i++) LedOn(i, profFlash_);
-			return;
+			profPhase_ = 0;
+			profBucket_ = (profBucket_ + 1) % kNumProf;
 		}
+		profFlash_ = !profFlash_;
 
-		uint32_t frac = ProfilePeakFrac();          // Q16 of budget
-		int lit = static_cast<int>((frac * 6) >> 16);
-		if (lit > 6) lit = 6;
-		for (int i = 0; i < 6; i++) LedOn(i, i < lit);
+		const ProfStat &s = gProf[profBucket_];
+		uint32_t frac = static_cast<uint32_t>(
+			static_cast<uint64_t>(s.peak) * 65536u / kCycleBudget);
+
+		// Left column: which bucket, in binary.
+		LedOn(0, (profBucket_ & 1) != 0);
+		LedOn(2, (profBucket_ & 2) != 0);
+		LedOn(4, (profBucket_ & 4) != 0);
+
+		// Right column: that bucket's peak, a third of the budget per LED.
+		if (frac >= 65536)
+		{
+			// Over budget on its own — flash so it is unmistakable.
+			LedOn(1, profFlash_); LedOn(3, profFlash_); LedOn(5, profFlash_);
+		}
+		else
+		{
+			int lit = static_cast<int>((frac * 3) >> 16);
+			LedOn(1, lit > 0);
+			LedOn(3, lit > 1);
+			LedOn(5, lit > 2);
+		}
 
 		// A Down tap clears the peaks, so each mode can be measured cleanly
 		// without power-cycling.
@@ -200,6 +232,8 @@ private:
 	}
 
 	int  profDiv_ = 0;
+	int  profPhase_ = 0;
+	int  profBucket_ = 0;
 	bool profFlash_ = false;
 
 	// PulseOut2 is protected, so the gate hook goes through a static trampoline

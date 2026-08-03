@@ -37,7 +37,7 @@ constexpr uint32_t kCycleBudget = 125000000u / 48000u;   // 2604
 #ifdef BIO_PROFILE
 
 /// What we time. Total is the whole callback; the rest are its phases.
-enum class Prof : uint8_t { Total = 0, Engine, Voices, Outputs, Count };
+enum class Prof : uint8_t { Total = 0, Engine, Voices, Outputs, Usb, Count };
 constexpr int kNumProf = static_cast<int>(Prof::Count);
 
 struct ProfStat
@@ -52,6 +52,19 @@ struct ProfStat
 /// needing a .cpp (C++17).
 inline ProfStat gProf[kNumProf] = {};
 
+/// Set true once the card has finished booting. Until then measurements are
+/// discarded: voices_.init() clears four 128-sample Karplus-Strong buffers and
+/// 32 grain slots on a SINGLE sample at the end of the boot window, which
+/// certainly overruns — and since `overruns` is cumulative, that one spike would
+/// otherwise latch the overrun indicator on forever and look like a steady-state
+/// fault in every mode.
+inline bool gProfArmed = false;
+
+/// Set `gProfGate` to a function that drives a pulse out, and the Total scope
+/// will raise it for the duration of the callback — a scope then shows the duty
+/// cycle directly, confirming the SysTick numbers with independent hardware.
+inline void (*gProfGate)(bool) = nullptr;
+
 /// Start SysTick free-running at the core clock. Call once before Run().
 inline void ProfileInit()
 {
@@ -65,12 +78,6 @@ inline void ProfileInit()
 }
 
 /// RAII scope: reads the counter at entry and exit and records the delta.
-///
-/// Set `gProfGate` to a function that drives a pulse out, and the Total scope
-/// will raise it for the duration of the callback — a scope then shows the duty
-/// cycle directly, confirming the SysTick numbers with independent hardware.
-inline void (*gProfGate)(bool) = nullptr;
-
 class ProfileScope
 {
 public:
@@ -82,6 +89,11 @@ public:
 
 	~ProfileScope()
 	{
+		if (!gProfArmed)
+		{
+			if (which_ == Prof::Total && gProfGate) gProfGate(false);
+			return;
+		}
 		uint32_t now = systick_hw->cvr;
 		// SysTick counts DOWN, so elapsed = start - now, and a single wrap
 		// past zero is corrected by the 24-bit mask. A scope longer than
@@ -119,7 +131,11 @@ inline void ProfileReset()
 	for (int i = 0; i < kNumProf; i++) { gProf[i].peak = 0; gProf[i].overruns = 0; }
 }
 
+/// Begin recording. Called once the boot-time allocation spike is behind us.
+inline void ProfileArm() { ProfileReset(); gProfArmed = true; }
+
 #define BIO_PROFILE_INIT()      ::bio::ProfileInit()
+#define BIO_PROFILE_ARM()       ::bio::ProfileArm()
 #define BIO_PROFILE_SCOPE(w)    ::bio::ProfileScope _bioProf##__LINE__(::bio::Prof::w)
 #define BIO_PROFILE_RESET()     ::bio::ProfileReset()
 
@@ -127,6 +143,7 @@ inline void ProfileReset()
 
 // Not profiling: every macro vanishes, so the normal build is unaffected.
 #define BIO_PROFILE_INIT()      ((void)0)
+#define BIO_PROFILE_ARM()       ((void)0)
 #define BIO_PROFILE_SCOPE(w)    ((void)0)
 #define BIO_PROFILE_RESET()     ((void)0)
 
