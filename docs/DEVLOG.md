@@ -144,25 +144,103 @@ sudden movement alarms animals, steady noise doesn't.
 
 ---
 
-## The real samples
+## Hardware: "samples playing far far too slow — like racing cars"
 
-42 recordings, already 48 kHz 16-bit mono. Two problems: more round robins than
-the firmware's four, and levels spanning ~36 dB.
+They were not playing at all. **Every boot was entering Drone mode**, whose old
+Meteors root was a 40 Hz saw pair through a sweeping filter — which is exactly
+what a passing vehicle sounds like.
 
-All 42 fit comfortably (834 KB of 1943 KB free), so rather than discarding
-three-quarters of the variety the firmware went to **eight variants**. Horses
-stayed at four — its variants are the hooves.
+`ComputerCard` derives the switch from `knobs[3]`, which comes off a ~60 Hz
+smoothing filter **initialised to zero — and zero decodes as `Switch::Down`**.
+For roughly the first 5 ms of every boot the card reports Down wherever the
+switch actually is. The boot window latched on "Down seen at any point", so it
+latched on *every* boot.
 
-Levels are matched by **RMS, not peak**. A sample's peak is usually one
-transient: the quietest goose had a body at RMS 0.004 against another at 0.059,
-yet both peak near 1.0, so peak-normalising would have left the quiet one still
-sounding quiet. Corrections ran from −15.5 dB to +20.6 dB; the library came out
-matched to 1.07× with nothing clipping and peaks still spread 0.16–0.85, so
-transients keep their character.
+Two follow-ups from the bench settled it: *"both boot modes seem to be doing the
+same"* pointed at the latch, and *"four sounds, rising in pitch"* was the synth
+hoof pitches (153/202/164/216 Hz), proving the PCM path was never reached. The
+fix is a single reading after settling — what WorkshopZX's `BootSelector` does,
+and what is proven on this hardware. I had claimed to be following that pattern
+and was not.
 
-The baker points repeated variant slots at one copy in flash rather than storing
-padding twice (saved 163 KB). Every baked slice was verified to byte-match its
-source.
+There is now a **boot splash** — Rhythm lights the left LED column, Drone the
+right — because the whole diagnosis was slow for want of any way to tell the
+modes apart.
+
+Found while tracing it: the PCM end-of-sample test used `pcmLen << 16`, which
+wraps above 65536 bytes. It was silently truncating the two longest meteor
+swooshes to under half their length.
+
+---
+
+## Drone was useless, and rightly called out
+
+The first Drone mapped engine `state[]` to oscillator pitch. Most engines put a
+**phase ramp** in `state[]`, so the pitch swept upward and snapped back forever,
+in half the modes — and it ignored the entire sample library in favour of saw
+oscillators.
+
+Rebuilt with **no oscillators**: Drone now granulates the same recordings, up to
+eight overlapping grains per voice started at random points and played stretched.
+The engines drive grain *density* and *spread*, never pitch. Grain periods were
+sized against the real sample lengths so overlap lands at 2–4×; the first pass
+asked for 16× overlap against four grain slots, which would have stolen grains
+mid-playback and chopped.
+
+---
+
+## Hardware: cicadas galloping
+
+Reported as clusters then silence, *"almost like galloping horses"* at CW. That
+detail was the diagnosis — it said the clusters were **periodic**. Measured:
+every 0.32 s, standard deviation 0.01 s. A metronome.
+
+**My first guess was wrong.** I assumed the twelve insects shared one fatigue
+time constant, gave each its own recovery rate and stamina, and it stayed
+rhythmic in every configuration. Measuring phase clustering instead found the
+real problem: phases converged from R=0.24 to **R=0.88 within five seconds** and
+froze, because every insect ran off one shared rate law with no natural frequency
+of its own. Detuning them dropped clustering to R=0.26.
+
+That stopped the unison but the field still pulsed, for a reason no amount of
+tuning fixes:
+
+> One shared field, plus "everyone speeds up when it's loud and tires when they
+> call", **is a relaxation oscillator**. Charge, discharge, repeat. It has exactly
+> one period.
+
+So the field became **four patches** that mostly hear themselves. Patches charge
+and discharge independently — measured correlation **0.01** — and cluster spacing
+went from a fixed 0.32 s to an irregular 0.4–8.6 s (cv 0.06 → 0.44–0.78).
+
+*Note for anyone reading `simulate.py`:* `cicadas_swing` reports **one patch**,
+not the mean. The mean is deliberately flat because independent patches cancel,
+and that cancellation is the point.
+
+---
+
+## Real samples, and a way to change them
+
+42 Pixabay recordings, already 48 kHz 16-bit mono, with levels spanning ~36 dB.
+All of them fit (834 KB of 1943 KB free), so rather than discarding
+three-quarters of the round robins the firmware went to **eight variants** —
+except Horses, whose variants are the hooves.
+
+Levels are matched by **RMS, not peak**. A peak is usually one transient: the
+quietest goose had a body at RMS 0.004 against another at 0.059, yet both peaked
+near 1.0, so peak-normalising would have left the quiet one still sounding quiet.
+Corrections ran −15.5 dB to +20.6 dB; the library came out matched to 1.07×.
+
+`interface.html` then removes the toolchain from the loop entirely: drag WAVs
+into a browser, they are converted and loudness-matched there and streamed over
+WebMIDI SysEx into a reserved 1 MB flash region, overriding the baked recordings
+per slot. The card mutes during the write because flash writes halt execution —
+honest about the constraint rather than glitching through it.
+
+The firmware image now sits only ~95 KB below that region, and adding baked audio
+would silently push it over, making flashing destroy uploads and uploads destroy
+firmware. `tools/checksize.cmake` reads the real image end from the ELF and fails
+the build if it ever reaches the boundary.
 
 ---
 
@@ -177,6 +255,13 @@ source.
   2604-cycle budget. Those are static upper bounds from instruction counts, not
   a measurement — the scope test on `ProcessSample()` duty cycle is still worth
   doing.
-- **Drone mode has never been heard.** Its pitch ranges and drone roots are
-  guesses. Same for the audio-reactive thresholds, which are untested against
-  real signal levels.
+- **Drone mode has never been heard.** Its grain rates and stretch factors are
+  calculated, not auditioned. Same for the audio-reactive thresholds, which are
+  untested against real signal levels.
+- **The USB path has never run on hardware.** TinyUSB enumeration, SysEx
+  reassembly and flash writing are verified only in the sense that they compile
+  and that the 7-bit codec round-trips against the firmware's decoder.
+- **Listening beats simulation, and simulation beats reading the code.** Every
+  fix in this log after the first release came from someone playing the card, and
+  more than one of my confident first guesses was wrong until I measured
+  something instead of reasoning about it.

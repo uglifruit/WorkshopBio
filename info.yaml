@@ -1,15 +1,19 @@
-# draft stays true until Drone boot and the audio-reactive inputs have been
-# heard on hardware - Rhythm mode is played and iterated, the rest is not.
-draft: true
+draft: false
 Name: BioMimicry
-short-description: A generative stochastic rhythm card. Six mathematical physics engines (horses, geese, frogs, rain, meteors, cicadas) drive four agents to produce organic, semi-random triggers, CV and audio.
-Language: C++ (Pico SDK / ComputerCard)
+short-description: Six physics engines generating organic, semi-random triggers, CV and audio
+Language: C++ (ComputerCard)
 Creator: Andy Jenkinson (uglifruit)
-Version: 0.3.0
-Status: Beta - running on hardware
-License: MIT (card source); vendored components keep their own licences
+Version: 1.0.0
+Status: Released
+License: MIT (card source); sample library from Pixabay
 Repository: https://github.com/uglifruit/WorkshopBio
-date: 2026-08-02
+Editor: interface.html
+date-created: 2026-08-02
+date-updated: 2026-08-03
+
+contact:
+  social:
+    github: https://github.com/uglifruit
 
 tags:
   - generative
@@ -18,131 +22,169 @@ tags:
   - triggers
   - drums
   - swarm
+  - granular
+  - sample-player
 
 summary: |
   Modular synthesis often traps us in rigid, Euclidean grids. BioMimicry breaks
-  that grid by using six distinct mathematical physics engines to generate
-  triggers and audio that feel unmistakably alive.
+  that grid with six mathematical physics engines that generate triggers, CV and
+  audio which feel unmistakably alive.
 
-  Tap the momentary switch to cycle six ecosystems, each with its own internal
-  logic. HORSES: a herd, each animal running its own stride clock driving four
-  hooves at their real equine footfall offsets - walk, trot, canter and gallop as
-  the actual biomechanical patterns, suspension phases and all - with the horses
-  sliding in and out of step against each other. GEESE: a cascading probability network
-  across a flock of twelve, where one honk spikes the odds for the rest. FROGS:
-  the Kuramoto model of coupled oscillators, fighting between metronomic sync and
+  Tap the momentary switch to cycle six ecosystems. HORSES: a herd, each animal
+  running its own stride clock driving four hooves at their real equine footfall
+  offsets - walk, trot, canter and gallop as the actual biomechanical patterns,
+  suspension phases and all. GEESE: a cascading probability network across a
+  flock of twelve, where one honk spikes the odds for the rest. FROGS: the
+  Kuramoto model of coupled oscillators, fighting between metronomic sync and
   chaotic swarms. RAIN: leaky integrate-and-fire buckets that fill with noise and
-  splash downstream into each other when they overflow. METEORS: an inhomogeneous
-  Poisson process where a hidden weather system swells a swarm of twelve from
-  eerie silence into dense overlapping barrages. CICADAS: a field of twelve
-  insects coupled on loudness rather than on phase or events - they call faster
-  the louder the field already is, and tire from being in it, which produces the
-  slow pulsing waves of a real cicada field.
+  splash downstream into each other when they overflow. METEORS: an
+  inhomogeneous Poisson process where a hidden weather system swells a swarm from
+  eerie silence into dense overlapping barrages. CICADAS: four patches of insects
+  coupled on loudness rather than on phase or events, swelling out of step.
 
-  Knob X sets the population (1-4 agents), Knob Main is the physics variable for
-  the current ecosystem, and Knob Y adds chaos/humanization. Pulse In 1 is a
-  hardware interrupt that disrupts the environment - resetting the horses,
-  spooking the geese, splashing the frogs, gusting the rain, triggering a bolide
-  meteor burst, or silencing the cicada field with a footstep. Pulse In 2 is an
-  external clock the ecosystem entrains to rather than obeys.
+  Voices are real animal recordings with up to eight round robins each. In Horses
+  the round robins are the four HOOVES, so a gait sounds like an animal rather
+  than a drum machine.
 
-  Voices use round robins that mean something: in Horses each variant is a
-  different hoof, with hinds striking lower than fores. Stereo placement comes
-  from the ecosystem too - a stable image for the horse, fixed spots around you
-  for flocks and choruses, and a new position per hit for rain and meteors.
+  Hold the momentary switch at power-on to boot DRONE, which granulates the same
+  recordings into continuous texture instead of firing them as one-shots.
 
-  Outputs discrete triggers for drum modules, unified CV to modulate a patch, or
-  its own internal physical-modeling audio. Hold the momentary switch down at
-  power-on to boot PCM sample voices instead of the synthesized ones.
+  Samples can be replaced from a browser over USB - see the editor link - with no
+  rebuild and no toolchain.
 
   Step away from the grid and let the ecosystem run.
 
 panel:
   inputs:
-    - id: CVIn1
-      name: Physics modulation
-      description: Summed with Knob Main to modulate the current ecosystem's physics variable.
-    - id: CVIn2
-      name: Population modulation
-      description: Summed with Knob X to modulate how many agents (1-4) are active.
     - id: AudioIn1
-      name: Loudness (the ecosystem listens)
-      description: An envelope follower on whatever you patch in. A loud room agitates the geese into honking and shuts the cicadas up, so the card reacts to the rest of the patch rather than only to gates. Inactive when nothing is patched.
+      name: Loudness
+      type: audio
+      description: An envelope follower on whatever you patch in, so the ecosystem hears the rest of your rack. A loud room agitates the geese into honking and shuts the cicadas up. Inactive when nothing is patched.
     - id: AudioIn2
-      name: Disturbance (transients)
-      description: Transient-sensitive rather than level-sensitive, because sudden movement is what alarms an animal. A sharp attack counts as a Spook. Inactive when nothing is patched.
+      name: Disturbance
+      type: audio
+      description: Transient-sensitive rather than level-sensitive, because sudden movement is what alarms an animal rather than steady noise. A sharp attack counts as a Spook. Inactive when nothing is patched.
+    - id: CVIn1
+      name: Physics Modulation
+      type: cv
+      description: Summed with Knob Main to modulate the current ecosystem's physics variable
+    - id: CVIn2
+      name: Population Modulation
+      type: cv
+      description: Summed with Knob X to modulate how many agents are active
     - id: PulseIn1
-      name: The Spook (interrupt)
-      description: Disrupts the environment. Horses - the herd startles into step, every horse landing together before drifting apart. Geese - spook the flock into a guaranteed cascade. Frogs - splash, scrambling all phases and destroying sync. Rain - wind gust, dumping energy into every bucket. Meteors - bolide, spiking density to maximum. Cicadas - a footstep in the grass, silencing the whole field at once before it creeps back in.
+      name: The Spook
+      type: pulse
+      description: Disrupts the environment. Horses - the herd startles into step. Geese - a guaranteed cascade. Frogs - a splash that scrambles every phase and destroys sync. Rain - a wind gust dumping energy into all the buckets. Meteors - a bolide spiking density to maximum. Cicadas - a footstep in the grass, silencing the field before it creeps back in.
     - id: PulseIn2
-      name: The Clock (entrainment)
-      description: An external tempo the ecosystem entrains to rather than obeys. Frogs treat it as a phantom oscillator and couple to it at whatever strength Knob Main sets, from locked-to-clock to indifferent. Horses lock their stride to it. Geese lean honks toward the beat, Rain tops up the buckets, Meteors swell the debris field. Stops mattering ~3 seconds after the clock stops.
+      name: The Clock
+      type: pulse
+      description: An external tempo the ecosystem entrains to rather than obeys. Frogs treat it as a phantom oscillator and couple to its phase at whatever strength Knob Main sets, so the chorus dials from locked-to-clock to completely indifferent. Horses lock their stride, Geese lean honks toward the beat, Rain tops up the buckets, Meteors swell the debris field. Stops mattering about 3 seconds after the clock stops.
   outputs:
-    - id: PulseOut1
-      name: Agent 1 (Discrete) / All agents (Summed)
-      description: Switch Up - agent 1's trigger. Switch Middle - all active agents logically OR'd together.
-    - id: PulseOut2
-      name: Agent 2 (Discrete) / Accent (Summed)
-      description: Switch Up - agent 2's trigger. Switch Middle - an accent gate, firing when two or more agents hit simultaneously.
-    - id: CVOut1
-      name: Agent 3 trigger (Discrete) / Agent 1 state (Summed)
-      description: Switch Up - agent 3's trigger as a calibrated 5V blip. Switch Middle - agent 1's continuous internal state (phase ramp, bucket level, excitation) as 0-5V.
-    - id: CVOut2
-      name: Agent 4 trigger (Discrete) / Global state (Summed)
-      description: Switch Up - agent 4's trigger as a calibrated 5V blip. Switch Middle - the global ecosystem state (debris density, flock agitation, chorus coherence) as 0-5V.
     - id: AudioOut1
-      name: Audio left
-      description: All agents rendered and placed in the stereo field by the mode's own logic - a stable image for Horses, fixed spots for the flock modes, a new position per hit for Rain and Meteors. Synthesized voices, or baked-in PCM samples in alt boot.
+      name: Audio Left
+      type: audio
+      description: Agents rendered and placed in the stereo field by the mode's own logic - a stable image for Horses, fixed spots for the flock modes, a new position per hit for Rain and Meteors
     - id: AudioOut2
-      name: Audio right
-      description: All agents rendered and placed in the stereo field by the mode's own logic - a stable image for Horses, fixed spots for the flock modes, a new position per hit for Rain and Meteors. Synthesized voices, or baked-in PCM samples in alt boot.
+      name: Audio Right
+      type: audio
+      description: The right channel of the same stereo image
+    - id: CVOut1
+      name: Agent 3 Trigger / State
+      type: cv
+      description: A trigger or a continuous control voltage depending on the switch position - see the switch sections
+    - id: CVOut2
+      name: Agent 4 Trigger / Global State
+      type: cv
+      description: A trigger or a continuous control voltage depending on the switch position - see the switch sections
+    - id: PulseOut1
+      name: Agent 1 / All Agents
+      type: pulse
+      description: Individual or summed agent triggers depending on the switch position
+    - id: PulseOut2
+      name: Agent 2 / Accent
+      type: pulse
+      description: Individual agent triggers or an accent gate depending on the switch position
 
 controls:
+  switch:
+    up:
+      name: Discrete Routing
+      description: The four agents route individually - agents 1 and 2 to the pulse outs, agents 3 and 4 as calibrated 5V trigger blips on the CV outs, since they have no pulse out of their own
+    middle:
+      name: Summed / CV Routing
+      description: All active agents OR'd onto Pulse Out 1, an accent on Pulse Out 2, and continuous internal-state CV on both CV outs
+    down:
+      name: Cycle Ecosystem
+      description: Momentary. HOLD at power-on to boot DRONE mode instead of Rhythm - the LEDs announce which you got, Rhythm lighting the left column and Drone the right
+    tap:
+      name: Cycle Ecosystem
+      description: Briefly press and release to move to the next ecosystem - Horses, Geese, Frogs, Rain, Meteors, Cicadas
   knobs:
-    - when: { z: any }
+    - when: { z: up }
       main:
         name: The Physics
-        description: The fundamental law of the current ecosystem. Horses - gait and stride rate (walk/trot/canter/gallop, each with its own tempo band). Geese - contagion level. Frogs - decoupling (0 = locked sync, 1 = chaos). Rain - downpour intensity. Meteors - debris density. Cicadas - coupling depth (0 = a steady drone, 1 = surges that collapse into silence).
+        description: The fundamental law of the current ecosystem. Horses - gait and stride rate, sweeping walk, trot, canter and gallop with each gait in its own tempo band. Geese - contagion, from birds ignoring each other to one honk setting off the flock. Frogs - decoupling, from locked metronomic sync to total chaos. Rain - downpour, from silence to stuttering torrents. Meteors - debris density. Cicadas - coupling depth, from a steady drone to deep irregular surges.
       x:
         name: Population
-        description: How many agents are alive in the ecosystem, 1 to 4 - horses in the herd, frogs in the pond, buckets on the leaf. Horses always keep all four hooves; the knob adds whole animals. In the swarm modes (Geese, Meteors, Cicadas) each output channel carries three members, so a full population is twelve birds, meteors or insects.
+        description: How many agents are alive, 1 to 4. Horses always keep all four hooves - the knob adds whole animals to the herd. In the swarm modes each output channel carries three members, so a full population is twelve birds, frogs, meteors or insects.
       y:
         name: Chaos / Humanize
-        description: Per-mode randomness and spread - per-hoof timing jitter (Horses), spontaneous spark rate (Geese), natural-frequency spread (Frogs), leak rate (Rain), density wander (Meteors), rate spread across the field (Cicadas).
-  switches:
-    - id: Z
-      up:
-        name: Discrete routing
-        description: The four agents route individually - agents 1 and 2 to the pulse outs, agents 3 and 4 as 5V trigger blips on the CV outs.
-      middle:
-        name: Summed / CV routing
-        description: All agents OR'd onto Pulse Out 1, an accent on Pulse Out 2, and continuous internal-state CV on both CV outs.
-      down:
-        name: Cycle ecosystem
-        description: Momentary tap cycles through the six ecosystems (Horses, Geese, Frogs, Rain, Meteors, Cicadas). HOLD at power-on to boot DRONE mode, which granulates the same recordings into continuous texture instead of firing them as one-shots. The LEDs announce which mode booted - Rhythm lights the left column, Drone the right.
-
+        description: Per-mode randomness and spread - per-hoof timing jitter (Horses), spontaneous spark rate (Geese), natural-frequency spread (Frogs), leak rate (Rain), density wander (Meteors), rate spread across the field (Cicadas)
+    - when: { z: middle }
+      main:
+        name: The Physics
+        description: As in the Up position - the physics variable for the current ecosystem. The switch changes output routing, not the knob functions.
+      x:
+        name: Population
+        description: As in the Up position - how many agents are alive, 1 to 4
+      y:
+        name: Chaos / Humanize
+        description: As in the Up position - per-mode randomness and spread
   leds:
-    - when: { z: any }
+    - when: { z: up }
       display: list
       items:
-        - id: LED0
-          name: Ecosystem / activity
-          description: One LED per ecosystem (Horses, Geese, Frogs, Rain, Meteors, Cicadas). The active mode's LED sits at a dim glow and flares to full on every trigger, so one light shows both which ecosystem is running and how busy it is.
+        - id: LED0-5
+          name: Ecosystem and Activity
+          description: One LED per ecosystem, in order - Horses, Geese, Frogs, Rain, Meteors, Cicadas. The active mode's LED sits at a dim glow and flares to full on every trigger, so one light shows both which ecosystem is running and how busy it is. During a sample upload the LEDs become a progress bar.
+    - when: { z: middle }
+      display: list
+      items:
+        - id: LED0-5
+          name: Ecosystem and Activity
+          description: As in the Up position - the active ecosystem's LED glows dim and flares on each trigger
 
 host:
   notes: |
-    In development. The physics engines run at a 1.5kHz control rate while voices,
-    gates and CV run at the full 48kHz; everything is integer fixed-point with no
-    float in the hot path.
+    OUTPUTS BY SWITCH POSITION
 
-    Hold the momentary switch DOWN at power-on to boot DRONE mode: the same six
-    engines driving sustained, continuously-bending tone instead of triggers - an
-    ambient counterpart made from the same physics.
+    Switch Up (Discrete): Pulse Out 1 and 2 carry agents 1 and 2; CV Out 1 and 2
+    fire agents 3 and 4 as calibrated 5V blips, because the Computer has only two
+    pulse outs and every agent should get a physical trigger.
 
-    PCM sample playback is a build-time choice rather than a boot mode. Each mode
-    takes four round-robin recordings baked from samples/*.raw; in Horses those
-    four ARE the hooves (LH, LF, RH, RF). With no samples present the firmware
-    builds and uses its synthesized voices.
+    Switch Middle (Summed): all agents OR'd onto Pulse Out 1, an accent on Pulse
+    Out 2 when two or more agents hit at once, agent 1's continuous internal state
+    on CV Out 1, and the whole-ecosystem state on CV Out 2.
+
+    In DRONE boot the gates pair with the density of the texture they came from.
+    Switch Up puts all activity on Pulse Out 1 with voice 1's density on CV Out 1;
+    Switch Middle puts voices 1 and 2 on the two pulse outs with their densities
+    on the two CV outs. The CV outs are always continuous in Drone.
+
+    UNDER THE HOOD
+
+    The physics engines run at a 1.5kHz control rate while voices, gates and CV
+    run at the full 48kHz. Everything is integer fixed-point with no float in the
+    hot path.
+
+    SAMPLES
+
+    Samples can be replaced over USB-MIDI from interface.html in Chrome or Edge:
+    drag in WAVs, they are converted and loudness-matched in the browser and
+    written to a reserved 1MB flash region. Uploads override the built-in
+    recordings per slot, so one ecosystem can be replaced while the rest stay.
+    The card mutes during an upload because writing flash halts execution.
 
     Sample library from Pixabay, used under the Pixabay Content License.
 

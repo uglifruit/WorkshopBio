@@ -15,12 +15,14 @@ mathematics were too good to leave out.)*
 Runs on a real Music Thing Modular Workshop System Computer. Built on the RP2040 with
 [ComputerCard](https://github.com/TomWhitwell/Workshop_Computer).
 
-> **Status:** running on hardware. Six ecosystems, two boot modes, and a full
-> sample library baked in. Rhythm mode has been played and iterated on; Drone
-> mode and the audio-reactive inputs are built but not yet heard.
+> **v1.0.0** — six ecosystems, two boot modes, a full library of real animal
+> recordings, and a browser app for swapping them over USB. Rhythm mode has been
+> played on hardware and iterated on across several rounds of listening; Drone
+> mode, the audio-reactive inputs and the USB uploader are built and verified in
+> simulation but have not yet been through the same listening.
 >
-> Development history and the reasoning behind the design is in
-> [docs/DEVLOG.md](docs/DEVLOG.md).
+> Why the card is the way it is — including the things that were wrong first — is
+> in [docs/DEVLOG.md](docs/DEVLOG.md).
 
 ---
 
@@ -140,19 +142,23 @@ tone ring-modulated by a wing-beat buzz.
 
 ### Round robins
 
-Every trigger picks one of four variants, and the variant *means* something:
+Every trigger picks a variant, and the variant *means* something:
 
-| Mode | What a variant is |
-|---|---|
-| **Horses** | **One per hoof** — the engine reports which hoof landed and the voice plays that hoof, hinds lower and heavier than fores. Every horse in the herd plays all four of its own. This is what stops a gait sounding like a drum machine. |
-| **Geese** | Four birds of different size |
-| **Frogs** | Four species in the chorus |
-| **Rain** | Four drip sizes |
-| **Meteors** | Four distances |
-| **Cicadas** | Four insects, tightly spread — a real field is fairly uniform |
+| Mode | Variants | What a variant is |
+|---|---|---|
+| **Horses** | 4 | **One per hoof.** The engine reports which hoof landed and the voice plays *that hoof* — hinds lower and heavier than fores. Every horse in the herd plays all four of its own. This is most of what stops a gait sounding like a drum machine. |
+| **Geese** | 8 | Birds of different size |
+| **Frogs** | 8 | Species in the chorus |
+| **Rain** | 8 | Drip sizes |
+| **Meteors** | 8 | Distances |
+| **Cicadas** | 8 | Insects, tightly spread — a real field is fairly uniform |
 
 Everything except Horses picks at random with a **no-immediate-repeat** rule, so you never
-hear the same honk or drip twice running.
+hear the same honk or drip twice running. On top of that each agent has a fixed playback
+rate — a body size, so agent 1 is always the largest animal — and the crowd modes jitter
+slightly per event, which stops two overlapping calls fusing into one doubled sound.
+Horses deliberately does *not* jitter: a horse is one animal, and a clop that changes
+pitch hit to hit stops sounding like a horse.
 
 ### Stereo placement
 
@@ -262,20 +268,22 @@ number covers every slot.
 attack is what identifies the sound), and **dry** — the card has no reverb, so any
 recorded ambience is baked in forever.
 
-Rough lengths, and the flash they cost at four variants each:
+The library that ships with the card, for scale:
 
-| Mode | Length | Flash |
-|---|---|---|
-| Horses | ~180 ms | 35 KB |
-| Geese | ~400 ms | 77 KB |
-| Frogs | ~300 ms | 58 KB |
-| Rain | ~120 ms | 23 KB |
-| Meteors | ~700 ms | 134 KB |
-| Cicadas | ~200 ms | 38 KB |
+| Mode | Variants | Average length | Flash |
+|---|---|---|---|
+| Horses | 4 (the hooves) | ~147 ms | 27 KB |
+| Geese | 8 | ~179 ms | 67 KB |
+| Frogs | 8 | ~770 ms | 289 KB |
+| Rain | 8 | ~104 ms | 39 KB |
+| Meteors | 5 | ~1461 ms | 342 KB |
+| Cicadas | 8 | ~148 ms | 55 KB |
 
-Total budget: code is ~107 KB of the 2 MB flash, leaving **~41 seconds** of 48 kHz mono
-PCM — about 1.7 s per variant across all 24. The table above comes to ~365 KB, so there
-is a lot of room; longer samples are fine, they just cost flash.
+That is **822 KB** in total. Firmware and baked samples share the first 1 MB of flash and
+currently end ~95 KB short of the boundary; the build fails with an explanation if they
+ever reach it, because past that point flashing would destroy uploaded samples and an
+upload would destroy the firmware. The second 1 MB is the user region — about 21 seconds
+of audio — which the web uploader writes to.
 
 `python tools/gensamples.py` writes procedural placeholders in the same layout, so the
 whole path works before you have a single recording.
