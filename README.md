@@ -15,7 +15,12 @@ mathematics were too good to leave out.)*
 Runs on a real Music Thing Modular Workshop System Computer. Built on the RP2040 with
 [ComputerCard](https://github.com/TomWhitwell/Workshop_Computer).
 
-> **Status:** firmware complete and building; awaiting hardware validation.
+> **Status:** running on hardware. Six ecosystems, two boot modes, and a full
+> sample library baked in. Rhythm mode has been played and iterated on; Drone
+> mode and the audio-reactive inputs are built but not yet heard.
+>
+> Development history and the reasoning behind the design is in
+> [docs/DEVLOG.md](docs/DEVLOG.md).
 
 ---
 

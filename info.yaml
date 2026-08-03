@@ -1,10 +1,12 @@
+# draft stays true until Drone boot and the audio-reactive inputs have been
+# heard on hardware - Rhythm mode is played and iterated, the rest is not.
 draft: true
 Name: BioMimicry
 short-description: A generative stochastic rhythm card. Six mathematical physics engines (horses, geese, frogs, rain, meteors, cicadas) drive four agents to produce organic, semi-random triggers, CV and audio.
 Language: C++ (Pico SDK / ComputerCard)
 Creator: Andy Jenkinson (uglifruit)
-Version: 0.2.0
-Status: In development
+Version: 0.3.0
+Status: Beta - running on hardware
 License: MIT (card source); vendored components keep their own licences
 Repository: https://github.com/uglifruit/WorkshopBio
 date: 2026-08-02
