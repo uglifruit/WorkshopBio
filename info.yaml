@@ -3,17 +3,22 @@ Name: BioMimicry
 short-description: Six physics engines generating organic, semi-random triggers, CV and audio
 Language: C++ (ComputerCard)
 Creator: Andy Jenkinson (uglifruit)
-Version: 1.0.0
+Version: "1.0.0"
 Status: Released
-License: CC BY 4.0 (card source); samples from Pixabay; ComputerCard.h MIT
-Repository: https://github.com/uglifruit/WorkshopBio
-Editor: interface.html
+License: CC-BY-4.0
+repository: https://github.com/uglifruit/WorkshopBio
+Editor: web
 date-created: 2026-08-02
 date-updated: 2026-08-03
 
 contact:
   social:
     github: https://github.com/uglifruit
+
+# The build computes the sha256 for repo-hosted firmware, so none is given here.
+uf2:
+  - path: UF2/biomimicry.uf2
+    name: BioMimicry 1.0.0
 
 tags:
   - generative
@@ -119,7 +124,7 @@ controls:
       name: Cycle Ecosystem
       description: Briefly press and release to move to the next ecosystem - Horses, Geese, Frogs, Rain, Meteors, Cicadas
   knobs:
-    - when: { z: up }
+    -
       main:
         name: The Physics
         description: The fundamental law of the current ecosystem. Horses - gait and stride rate, sweeping walk, trot, canter and gallop with each gait in its own tempo band. Geese - contagion, from birds ignoring each other to one honk setting off the flock. Frogs - decoupling, from locked metronomic sync to total chaos. Rain - downpour, from silence to stuttering torrents. Meteors - debris density. Cicadas - coupling depth, from a steady drone to deep irregular surges.
@@ -128,30 +133,14 @@ controls:
         description: How many agents are alive, 1 to 4. Horses always keep all four hooves - the knob adds whole animals to the herd. In the swarm modes each output channel carries three members, so a full population is twelve birds, frogs, meteors or insects.
       y:
         name: Chaos / Humanize
-        description: Per-mode randomness and spread - per-hoof timing jitter (Horses), spontaneous spark rate (Geese), natural-frequency spread (Frogs), leak rate (Rain), density wander (Meteors), rate spread across the field (Cicadas)
-    - when: { z: middle }
-      main:
-        name: The Physics
-        description: As in the Up position - the physics variable for the current ecosystem. The switch changes output routing, not the knob functions.
-      x:
-        name: Population
-        description: As in the Up position - how many agents are alive, 1 to 4
-      y:
-        name: Chaos / Humanize
-        description: As in the Up position - per-mode randomness and spread
+        description: Per-mode randomness and spread - per-hoof timing jitter (Horses), spontaneous spark rate (Geese), natural-frequency spread (Frogs), leak rate (Rain), density wander (Meteors), rate spread across the field (Cicadas). In Drone boot, the pitch spread across grains.
   leds:
-    - when: { z: up }
+    -
       display: list
       items:
         - id: LED0-5
           name: Ecosystem and Activity
           description: One LED per ecosystem, in order - Horses, Geese, Frogs, Rain, Meteors, Cicadas. The active mode's LED sits at a dim glow and flares to full on every trigger, so one light shows both which ecosystem is running and how busy it is. During a sample upload the LEDs become a progress bar.
-    - when: { z: middle }
-      display: list
-      items:
-        - id: LED0-5
-          name: Ecosystem and Activity
-          description: As in the Up position - the active ecosystem's LED glows dim and flares on each trigger
 
 host:
   notes: |
@@ -178,16 +167,16 @@ host:
 
     SAMPLES
 
-    Samples can be replaced over USB-MIDI from interface.html in Chrome or Edge:
+    Samples can be replaced over USB-MIDI from the web editor in Chrome or Edge:
     drag in WAVs, they are converted and loudness-matched in the browser and
     written to a reserved 1MB flash region. Uploads override the built-in
     recordings per slot, so one ecosystem can be replaced while the rest stay.
     The card mutes during an upload because writing flash halts execution.
 
-    LICENCE - the card's own source is CC BY 4.0: use, fork or sell it, just
-    credit Andy Jenkinson (uglifruit). The sample library is from Pixabay under
-    the Pixabay Content License and is not mine to relicense; ComputerCard.h
-    keeps its own MIT licence.
+    LICENCE - CC-BY-4.0 covers the card's own source: use, fork or sell it, just
+    credit Andy Jenkinson (uglifruit). Two things are not mine to relicense and
+    keep their own terms - the sample library is from Pixabay under the Pixabay
+    Content License, and ComputerCard.h is Chris Johnson's, MIT.
 
     CREDITS - ComputerCard by Chris Johnson (Music Thing Modular). The Kuramoto
     model of coupled oscillators (Yoshiki Kuramoto); leaky integrate-and-fire and

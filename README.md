@@ -201,7 +201,7 @@ and the rhythm.
 
 ## Replacing samples without a rebuild
 
-Open [`interface.html`](interface.html) in Chrome or Edge, plug the card in over USB and
+Open [`web/index.html`](web/index.html) in Chrome or Edge, plug the card in over USB and
 click **Connect**. Drag WAVs onto the mode slots and press **Upload** — the browser
 converts them (any rate, mono or stereo), matches loudness across everything you load,
 and streams them into a 1&nbsp;MB region of the card's flash over WebMIDI SysEx.
@@ -353,7 +353,7 @@ default PATH — see [CLAUDE.md](CLAUDE.md) for the exact invocation.
 
 ## Licence
 
-**[CC BY 4.0](LICENSE)** — Creative Commons Attribution 4.0 International.
+**[CC-BY-4.0](LICENSE)** — Creative Commons Attribution 4.0 International.
 Use it, fork it, sell it, put it in your own card; just credit
 **Andy Jenkinson (uglifruit)**.
 

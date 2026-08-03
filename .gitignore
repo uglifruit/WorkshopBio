@@ -1,6 +1,5 @@
 build/
 build-*/
-UF2/
 
 # Generated from samples/*.raw by tools/mksamples.py at build time
 samples.h
@@ -19,7 +18,8 @@ tools/*.o
 __pycache__/
 *.pyc
 
-# Build outputs kept locally for flashing, not published
+# The released firmware IS published, so the site can offer a download and
+# compute its sha256. Working copies in FLASHME/ are not.
 FLASHME/*.uf2
 FLASHME/*.bin
 FLASHME/*.elf

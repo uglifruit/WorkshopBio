@@ -41,7 +41,7 @@ most of what makes a gait sound like an animal rather than a drum machine.
 
 Three ways, easiest first:
 
-1. **In a browser, no rebuild** — open `interface.html`, drag WAVs onto the mode
+1. **In a browser, no rebuild** — open `web/index.html`, drag WAVs onto the mode
    slots, upload over USB. See the README.
 2. **Rebuild with your own** — drop WAVs into `samples/incoming/` and run
    `python tools/importwav.py`, then rebuild. Accepts any sample rate, mono or

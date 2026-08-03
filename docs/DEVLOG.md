@@ -231,7 +231,7 @@ quietest goose had a body at RMS 0.004 against another at 0.059, yet both peaked
 near 1.0, so peak-normalising would have left the quiet one still sounding quiet.
 Corrections ran −15.5 dB to +20.6 dB; the library came out matched to 1.07×.
 
-`interface.html` then removes the toolchain from the loop entirely: drag WAVs
+The web editor then removes the toolchain from the loop entirely: drag WAVs
 into a browser, they are converted and loudness-matched there and streamed over
 WebMIDI SysEx into a reserved 1 MB flash region, overriding the baked recordings
 per slot. The card mutes during the write because flash writes halt execution —
