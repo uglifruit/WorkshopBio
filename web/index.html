@@ -69,7 +69,8 @@
     — the LEDs fill left to right, and all six stay lit once it has handed itself
     over to USB. The card does not appear to your computer until you do: it runs
     no USB at all while it is playing, which is what keeps the audio path clear.
-    Then press Connect. Power-cycle the card to play it again.
+    Then press Connect. To go back to playing, <strong>hold the switch again</strong>
+    or press <strong>Back to playing</strong> — either restarts the card.
   </p>
 
   <div class="bar">
@@ -77,6 +78,7 @@
     <button id="upload" class="ghost" disabled>Upload to card</button>
     <button id="revert" class="ghost" disabled>Revert to built-in</button>
     <button id="prof" class="ghost" disabled>Read timing</button>
+    <button id="play" class="ghost" disabled>Back to playing</button>
     <span id="status">Not connected.</span>
   </div>
 
@@ -129,7 +131,7 @@ const MFR = 0x7D;
 const MSG = {
   HELLO:0x01, INFO:0x02, UP_BEGIN:0x10, UP_SLOT:0x11, UP_CHUNK:0x12,
   UP_SLOTEND:0x13, UP_END:0x14, ACK:0x15, ERR:0x16, ERASE:0x20,
-  PROF_GET:0x30, PROF:0x31,
+  PLAY:0x21, PROF_GET:0x30, PROF:0x31,
 };
 
 // Cycles available per sample: 125MHz / 48kHz. Matches kCycleBudget in profile.h.
@@ -311,6 +313,7 @@ async function connect() {
     }
     document.getElementById("upload").disabled = false;
     document.getElementById("prof").disabled = false;
+    document.getElementById("play").disabled = false;
   } catch (e) {
     setStatus("WebMIDI unavailable: " + e.message, "err");
   }
@@ -419,12 +422,38 @@ async function readProfile() {
     const overruns = (d[ovIdx] << 14) | (d[ovIdx+1] << 7) | d[ovIdx+2];
     rows.push(`<tr><td>Overruns</td><td style="color:${overruns ? "var(--err)" : "var(--accent)"}">` +
               `${overruns}</td><td class="note">samples over budget since last read</td></tr>`);
+
+    // Core 1's worst backlog, if this firmware reports it.
+    const blIdx = ovIdx + 3;
+    if (d.length > blIdx + 2) {
+      const bl = (d[blIdx] << 14) | (d[blIdx+1] << 7) | d[blIdx+2];
+      const bad = bl > 1;
+      rows.push(`<tr><td>Core 1 backlog</td>` +
+                `<td style="color:${bad ? "var(--err)" : "var(--accent)"}">${bl}</td>` +
+                `<td class="note">control ticks owed at once — 1 is healthy, ` +
+                `2+ means core 1 cannot keep up</td></tr>`);
+    }
     document.getElementById("proftable").innerHTML = rows.join("");
     document.getElementById("profout").hidden = false;
     setStatus(overruns ? `${overruns} samples over budget.`
                        : "No overruns in that window.", overruns ? "err" : "ok");
   } catch (e) {
     setStatus("Could not read timing: " + e.message, "err");
+  }
+}
+
+// Send the card back to being an instrument. It reboots, so like every other
+// reboot path here the ack may not arrive — that is success, not failure.
+async function backToPlaying() {
+  try {
+    send([MSG.PLAY]);
+    await waitAck(4000).catch(() => null);
+    setStatus("Card is restarting — it should be playing again in a moment.", "ok");
+    for (const id of ["upload", "revert", "prof", "play"])
+      document.getElementById(id).disabled = true;
+    document.getElementById("connect").disabled = false;
+  } catch (e) {
+    setStatus("Could not switch back: " + e.message, "err");
   }
 }
 
@@ -493,6 +522,7 @@ document.getElementById("connect").onclick = connect;
 document.getElementById("upload").onclick = upload;
 document.getElementById("revert").onclick = revert;
 document.getElementById("prof").onclick = readProfile;
+document.getElementById("play").onclick = backToPlaying;
 build();
 </script>
 </body>

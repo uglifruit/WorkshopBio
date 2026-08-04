@@ -1,6 +1,7 @@
 // webui.cpp — USB-MIDI SysEx sample upload.
 
 #include "webui.h"
+#include "crosscore.h"
 #include <string.h>
 #include "tusb.h"
 #include "profile.h"
@@ -481,7 +482,7 @@ void __not_in_flash_func(WebUI::HandleSysex)(const uint8_t *msg, uint32_t len)
 	{
 		// Exact cycle counts beat asking someone to decode blinking LEDs.
 		// Each value is 3 septets (21 bits), plenty for a 2604-cycle budget.
-		uint8_t p2[2 + kNumProf * 3 + 3];
+		uint8_t p2[2 + kNumProf * 3 + 6];
 		uint32_t o = 0;
 		p2[o++] = MSG_PROF;
 		p2[o++] = static_cast<uint8_t>(kNumProf);
@@ -496,7 +497,16 @@ void __not_in_flash_func(WebUI::HandleSysex)(const uint8_t *msg, uint32_t len)
 		p2[o++] = static_cast<uint8_t>((ov >> 14) & 0x7F);
 		p2[o++] = static_cast<uint8_t>((ov >> 7)  & 0x7F);
 		p2[o++] = static_cast<uint8_t>( ov        & 0x7F);
+
+		// Core 1's worst backlog: how many control ticks it owed at once. 1 is
+		// healthy; a steady 2+ means it cannot keep up with the 1.5kHz grid and
+		// the physics are running in slow motion.
+		uint32_t bl = gXC.maxBacklog;
+		p2[o++] = static_cast<uint8_t>((bl >> 14) & 0x7F);
+		p2[o++] = static_cast<uint8_t>((bl >> 7)  & 0x7F);
+		p2[o++] = static_cast<uint8_t>( bl        & 0x7F);
 		Send(p2, o);
+		gXC.maxBacklog = 0;
 		ProfileReset();          // so each query reports a fresh window
 		break;
 	}
@@ -514,6 +524,16 @@ void __not_in_flash_func(WebUI::HandleSysex)(const uint8_t *msg, uint32_t len)
 		EraseRegion(kUserRegionOff, kFlashSector);
 		SendAck(5, 0);
 		FlushUsb(200);
+		watchdog_reboot(0, 0, 0);
+		break;
+
+	case MSG_PLAY:
+		// Leave USB mode and go back to being an instrument. No flash is touched
+		// here, so there is nothing to park for -- just ack, get the reply out
+		// while USB still exists, and reboot. Holding the switch again does the
+		// same thing from the card itself.
+		SendAck(6, 0);
+		FlushUsb(150);
 		watchdog_reboot(0, 0, 0);
 		break;
 

@@ -19,7 +19,9 @@
 #include "samplestore.h"       // user flash region
 #include "webui.h"             // USB-MIDI sample upload
 #include "profile.h"           // -DBIO_PROFILE=ON: cycle-count ProcessSample
+#include "crosscore.h"         // the only state shared between the cores
 #include "pico/multicore.h"
+#include "hardware/watchdog.h" // leaving USB mode reboots
 
 using namespace bio;
 
@@ -102,7 +104,25 @@ public:
 		// card does not enumerate, USBCTRL_IRQ (whose handler lives in flash) is
 		// never armed, and nothing on this core competes with the audio path
 		// while the card is being played.
-		while (!WebUI::usbMode) tight_loop_contents();
+		//
+		// The loop also exercises the pacing the physics will use, so the
+		// mechanism is proven before anything depends on it. maxBacklog is how
+		// many control ticks core 1 owed at once: 1 is healthy, a steady 2+ means
+		// it cannot keep up and the physics would be running in slow motion.
+		{
+			uint32_t lastSample = gXC.sampleCount;
+			while (!WebUI::usbMode)
+			{
+				uint32_t elapsed = gXC.sampleCount - lastSample;
+				if (elapsed < static_cast<uint32_t>(kCtrlDiv)) { tight_loop_contents(); continue; }
+				uint32_t owed = elapsed >> 5;          // kCtrlDiv is 32: a shift
+				if (owed > gXC.maxBacklog) gXC.maxBacklog = owed;
+				if (owed > 4) owed = 4;                // slow motion, not a burst
+				// Anchored, NOT `= gXC.sampleCount`: keeps the tick grid on the
+				// 1.5kHz phase instead of letting it drift after a stall.
+				lastSample += owed * kCtrlDiv;
+			}
+		}
 
 		// Held: bring USB up, on this core, and stay here.
 		gWebUI->Init();
@@ -240,6 +260,12 @@ public:
 			uiTick();
 		}
 
+		// Core 1's clock. Everything it does is paced off this rather than
+		// free-running, so the 1.5kHz control rate stays anchored to audio time.
+		// Published now, unused until the physics move across.
+		gXC.sampleCount++;
+		gXC.switchMirror = static_cast<uint8_t>(SwitchVal());
+
 		// ---- Audio (48kHz) ----------------------------------------------
 		int16_t l, r;
 		{
@@ -357,9 +383,22 @@ private:
 
 			if (downTicks_ == kHoldTicks && !holdFired_)
 			{
-				// Held long enough: hand the card over to USB and consume the tap.
 				holdFired_ = true;
-				enterUsbMode();
+				if (WebUI::usbMode)
+				{
+					// Already in USB mode: hold again to leave. Entering by
+					// accident mid-set and being told to power-cycle is not an
+					// acceptable answer, and a reboot is the honest way out —
+					// TinyUSB cannot be cleanly unwound, and the card reboots
+					// after a successful upload anyway, so the path is proven.
+					// Any uploaded samples are already committed to flash.
+					leaveUsbMode();
+				}
+				else
+				{
+					// Hand the card over to USB, and consume the tap.
+					enterUsbMode();
+				}
 			}
 		}
 		else
@@ -512,22 +551,25 @@ private:
 		// Leave the LEDs alone while the boot splash is still showing.
 		if (splash_ != 0) return;
 
-		// In USB mode all six stay lit: the card is not performing, and this is
-		// the "power-cycle to play again" indicator. An upload overrides it with
-		// its own stage count, driven from core 1.
-		if (WebUI::usbMode)
-		{
-			for (int i = 0; i < 6; i++) LedOn(i, true);
-			return;
-		}
-
 		// Holding the switch fills the LEDs left to right, so the two-second
 		// hold is something you watch arrive rather than count in your head.
 		// Releasing before the fill completes is a tap and cycles the mode.
+		//
+		// This is checked BEFORE the usbMode branch below, so the same fill also
+		// shows the hold that LEAVES usb mode — the way out looks like the way in.
 		if (downTicks_ > 0)
 		{
 			int lit = static_cast<int>((downTicks_ * 6) / kHoldTicks);
 			for (int i = 0; i < 6; i++) LedOn(i, i < lit);
+			return;
+		}
+
+		// In USB mode all six stay lit: the card is not performing. Hold again
+		// to leave. An upload overrides this with its own stage count, driven
+		// from core 1.
+		if (WebUI::usbMode)
+		{
+			for (int i = 0; i < 6; i++) LedOn(i, true);
 			return;
 		}
 
@@ -579,9 +621,11 @@ private:
 			lastAudio2_ = a;
 			if (d < 0) d = -d;
 			// A sharp transient arms a startle that the control tick consumes.
-			if ((d << 4) > kQ16One / 3) startle_ = true;
+			if ((d << 4) > kQ16One / 3) { startle_ = true; gXC.startleSeq++; }
 		}
 		else lastAudio2_ = 0;
+
+		gXC.loudness = loudness_;
 	}
 
 	// -------------------------------------------------------------------
@@ -590,8 +634,13 @@ private:
 	{
 		// Pulse ins are edge-detected at audio rate so a short trigger is never
 		// missed between control ticks.
-		if (PulseIn1RisingEdge()) spookPending_ = true;
-		if (PulseIn2RisingEdge()) clockPending_ = true;
+		//
+		// The seq counters are the cross-core form of the same thing, published
+		// alongside the flags until the physics actually move to core 1. A
+		// counter cannot lose an edge the way a bool can, so two pulses inside
+		// one control tick stop collapsing into one.
+		if (PulseIn1RisingEdge()) { spookPending_ = true; gXC.spookSeq++; }
+		if (PulseIn2RisingEdge()) { clockPending_ = true; gXC.clockSeq++; }
 
 		PulseOut1(pulseTimer_[0] > 0);
 		PulseOut2(pulseTimer_[1] > 0);
@@ -646,6 +695,22 @@ private:
 		// They stay sticky until MSG_PROF_GET replies, which is what the web UI
 		// tells the user: play the mode, then hold, connect and read.
 		WebUI::usbMode = true; // core 1 picks this up and calls tusb_init()
+	}
+
+	/// Leave USB mode, by rebooting.
+	///
+	/// Reached by holding the switch again, so entering by accident costs two
+	/// seconds rather than a trip to the power switch. A reboot rather than an
+	/// unwind: TinyUSB has no reliable teardown, the sample pointers the engine
+	/// cached may be stale after an upload, and a restart resolves everything
+	/// cleanly at boot — which is what an upload already does.
+	void __not_in_flash_func(leaveUsbMode)()
+	{
+		AudioOut1(0);
+		AudioOut2(0);
+		PulseOut1(false);
+		PulseOut2(false);
+		watchdog_reboot(0, 0, 0);
 	}
 
 	static int32_t clampQ16(int32_t v)
