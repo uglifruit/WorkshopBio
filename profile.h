@@ -37,7 +37,9 @@ constexpr uint32_t kCycleBudget = 125000000u / 48000u;   // 2604
 #ifdef BIO_PROFILE
 
 /// What we time. Total is the whole callback; the rest are its phases.
-enum class Prof : uint8_t { Total = 0, Engine, Voices, Outputs, Usb, Count };
+// Named for what they now measure. "Engine" no longer means the physics: after
+// v1.1.0 those run on core 1, and this is core 0's remaining control work.
+enum class Prof : uint8_t { Total = 0, Ctrl, Voices, Outputs, Notes, Count };
 constexpr int kNumProf = static_cast<int>(Prof::Count);
 
 struct ProfStat

@@ -260,13 +260,26 @@ public:
 		if (++ctrlDiv_ >= kCtrlDiv) ctrlDiv_ = 0;
 		if (ctrlDiv_ == 0)
 		{
-			BIO_PROFILE_SCOPE(Engine);
+			BIO_PROFILE_SCOPE(Ctrl);
 			controlTick();
 		}
 		else if (ctrlDiv_ == kCtrlDiv / 2)
 		{
 			BIO_PROFILE_SCOPE(Outputs);
 			uiTick();
+		}
+		else
+		{
+			// ONE queued note-on per sample, on the samples that have nothing
+			// else to do. note() is ~300 instructions and a full Geese tick fires
+			// four at once, so draining them together put ~1200 instructions on a
+			// single sample — the whole cost the split was meant to remove, just
+			// moved rather than spread. The ring already decouples when a note is
+			// consumed from when it was produced, so there is no reason to take
+			// them all in one slot. 30 free samples per control period against a
+			// worst case of 4 notes is ample.
+			BIO_PROFILE_SCOPE(Notes);
+			drainOneTrigger();
 		}
 
 		// Core 1's clock. Everything it does is paced off this rather than
@@ -460,7 +473,8 @@ private:
 		// flashed and measured on its own.
 		if (boot_ == BootMode::Drone) { droneControlTick(); return; }
 
-		drainTriggers();
+		// Note-ons are drained one per sample elsewhere, so this tick only
+		// applies the gate and CV decisions core 1 made.
 		applyOutputTargets();
 	}
 
@@ -542,18 +556,15 @@ private:
 	/// note() writes ~20 fields of Voice including a 128-entry ks[] buffer, and
 	/// render() reads and mutates the same struct every sample — so this cannot
 	/// move to core 1 whatever the timing says. The ring is what crosses instead.
-	void __not_in_flash_func(drainTriggers)()
+	void __not_in_flash_func(drainOneTrigger)()
 	{
 		if (boot_ == BootMode::Drone) return;   // Drone still ticks on core 0
+		if (gTrig.tail == gTrig.head) return;
 
-		uint32_t head = gTrig.head;             // snapshot once
-		while (gTrig.tail != head)
-		{
-			TrigWord w = gTrig.slot[gTrig.tail & (kTrigRingSize - 1)];
-			gTrig.tail = gTrig.tail + 1;
-			voices_.note(TrigAgent(w), static_cast<Mode>(TrigMode(w)), kQ16One,
-			             TrigVariation(w), static_cast<uint8_t>(TrigMember(w)));
-		}
+		TrigWord w = gTrig.slot[gTrig.tail & (kTrigRingSize - 1)];
+		gTrig.tail = gTrig.tail + 1;
+		voices_.note(TrigAgent(w), static_cast<Mode>(TrigMode(w)), kQ16One,
+		             TrigVariation(w), static_cast<uint8_t>(TrigMember(w)));
 	}
 
 	// -------------------------------------------------------------------
