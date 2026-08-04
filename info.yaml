@@ -10,7 +10,7 @@ repository: https://github.com/uglifruit/WorkshopBio
 discussion: https://discord.com/channels/1210238368898879569/1533895615442849812
 Editor: web
 date-created: 2026-08-02
-date-updated: 2026-08-03
+date-updated: 2026-08-04
 
 contact:
   social:
@@ -141,7 +141,7 @@ controls:
       items:
         - id: LED0-5
           name: Ecosystem and Activity
-          description: One LED per ecosystem, in order - Horses, Geese, Frogs, Rain, Meteors, Cicadas. The active mode's LED sits at a dim glow and flares to full on every trigger, so one light shows both which ecosystem is running and how busy it is. During a sample upload the LEDs become a progress bar.
+          description: One LED per ecosystem, in order - Horses, Geese, Frogs, Rain, Meteors, Cicadas. The active mode's LED sits at a dim glow and flares to full on every trigger, so one light shows both which ecosystem is running and how busy it is. During the final write of a sample upload they show a stage count instead, so a failure reports where it stopped.
 
 host:
   notes: |
@@ -172,7 +172,12 @@ host:
     drag in WAVs, they are converted and loudness-matched in the browser and
     written to a reserved 1MB flash region. Uploads override the built-in
     recordings per slot, so one ecosystem can be replaced while the rest stay.
-    The card mutes during an upload because writing flash halts execution.
+
+    The card keeps playing while it receives, then stops for the final write and
+    reboots into the new samples. Writing flash halts execution and takes USB
+    with it - the USB stack lives in flash - so a transfer is buffered in RAM and
+    committed in one go. That caps a single upload at 128KB: one large recording
+    or several small ones per pass.
 
     LICENCE - CC-BY-4.0 covers the card's own source: use, fork or sell it, just
     credit Andy Jenkinson (uglifruit). Two things are not mine to relicense and

@@ -15,9 +15,11 @@ Runs on a Music Thing Modular Workshop System Computer. Built on the RP2040 with
 
 > **v1.0.0** — six ecosystems, two boot modes, a full library of real animal
 > recordings, and a browser app for swapping them over USB. Rhythm mode has been
-> played on hardware and iterated on across several rounds of listening; Drone
-> mode, the audio-reactive inputs and the USB uploader are built and verified in
-> simulation but have not yet been through the same listening.
+> played on hardware and iterated on across several rounds of listening. The USB
+> uploader now works on hardware too: transfers complete and survive a reboot.
+> Drone mode has been heard and profiled, and still runs slightly over its
+> per-sample budget on dense material; the audio-reactive inputs remain untested
+> against real signal levels.
 >
 > Why the card is the way it is — including the things that were wrong first — is
 > in [docs/DEVLOG.md](docs/DEVLOG.md).
@@ -213,9 +215,12 @@ Uploaded samples **override the baked ones per slot**, so you can replace just t
 and keep everything else. **Revert to built-in** forgets them again. A full library
 takes a few seconds.
 
-> The card **mutes while uploading**. Writing flash halts the RP2040's execution, so the
-> ecosystem stops and the LEDs show a progress bar until it finishes. Uploading is a
-> setup activity, not a performance one.
+> The card **keeps playing while it receives**, then stops for the final write and
+> **reboots** into the new samples. Writing flash halts the RP2040 — and takes USB down
+> with it, since the USB stack itself lives in flash — so the whole transfer is buffered
+> in RAM and committed in one go at the end. That caps a single upload at **128 KB**:
+> one large recording or several small ones per pass. Uploading is a setup activity,
+> not a performance one.
 
 Flash layout: firmware and baked samples occupy the first 1&nbsp;MB, user samples the
 second. The build fails loudly if the firmware ever grows into the user region, because

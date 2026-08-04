@@ -607,6 +607,63 @@ decision to make by ear rather than an optimisation to slip in.
 
 ---
 
+## The uploader works — and the LEDs are what found it
+
+Six attempts. The one that mattered was not a fix at all: it was giving up on
+guessing and making the card **say where it stopped**.
+
+`WebUI::stage` counts the steps and core 1 renders it on the LEDs as a binary
+number. First run reported **LEDs 0 and 2 — stage 5**, and that single reading
+ended the guessing. Everything hard had *already worked*: core 0 parked in RAM,
+boot2 primed, the header read, and the **erase completed without faulting**. It
+hung on the very next line — sending the ack.
+
+Which meant the flash hazard, the thing three rounds of work had been aimed at,
+was never the problem after the park went in.
+
+### The real constraint
+
+**TinyUSB's device stack is entirely in flash**, including its `USBCTRL_IRQ`
+handler `dcd_rp2040_irq`. So core 1 cannot service USB and write flash: *the
+stack it needs lives in the memory it is erasing.* Masking `DMA_IRQ_0` and
+`PWM_IRQ_WRAP` was never sufficient — the moment interrupts came back, a pending
+USB interrupt vectored into dead flash and the stack never recovered. The ack was
+queued and could never leave.
+
+That is why patching details kept failing. The design could not work, so the
+design changed:
+
+> Receive the **whole** upload into a 128KB RAM buffer with everything running
+> normally — audio, USB, LEDs — then ack, flush, and touch flash exactly **once**,
+> after the last byte has already arrived.
+
+The card stops being a synth only for the final commit, not for the transfer.
+
+### What it cost
+
+One upload is now capped at **128KB by RAM**, not by the 1MB flash region.
+`MSG_INFO` reports the staging size so the browser rejects on the true limit. The
+largest baked recording is meteors_5 at 116KB, so one big sample or several small
+ones fit per pass; a whole library does not. RAM sits at 69%.
+
+Slot offsets are staged as buffer offsets and rewritten to flash offsets at
+commit once the append base is known, with a `touched_` table so untouched slots
+keep their existing offsets instead of being shifted.
+
+**Confirmed on hardware: uploads complete, and the samples survive the reboot.**
+
+### The lesson, which is the same one as last time
+
+Every real advance this session came from a measurement, not from reasoning about
+the code. The profiler found the Drone divide. The Drone *listening* found what
+the Rhythm-only sweep missed. The stage LEDs found that the flash write was
+already fine and USB was the casualty. Three times running, the confident
+diagnosis was wrong and the instrument was right.
+
+When a fix fails twice, the third attempt should probably be a measurement.
+
+---
+
 ## Standing notes
 
 - **`tools/simulate.py` duplicates the C++ constants.** It will drift if
@@ -630,10 +687,18 @@ decision to make by ear rather than an optimisation to slip in.
   from someone listening, not from the numbers.
 - **The USB path partly runs on hardware.** Enumeration, SysEx round-trip and the
   browser's `MSG_PROF_GET` query are proven — that is how the timing above was
-  read. **Sample upload is still unproven.** It has been *attempted*, which is how
-  the deadlock was found; the rewritten version (stop audio, append, reboot) has
-  been built but never run. Treat a successful upload as unverified until one
-  completes and the card comes back with the new samples.
+  read. **Sample upload now works on hardware** — transfers complete, commit, and
+  the samples survive the reboot. It took six attempts; the constraint that
+  finally explained it is that TinyUSB lives in flash, so USB and flash writes
+  cannot coexist. Uploads are RAM-staged and capped at 128KB per pass.
+- **When a fix fails twice, make the third attempt a measurement.** The uploader
+  took six tries; the one that solved it added a stage counter on the LEDs rather
+  than changing any logic. One reading (stage 5) proved the flash write was
+  already working and USB was the casualty, which no amount of re-reading the
+  code had suggested.
+- **The card can only report what is still alive.** USB cannot describe a failure
+  that stops USB, and the LEDs cannot describe one that stops `ProcessSample()`.
+  Pick the out-of-band channel that survives the thing being diagnosed.
 - **Listening beats simulation, and simulation beats reading the code.** Every
   fix in this log after the first release came from someone playing the card, and
   more than one of my confident first guesses was wrong until I measured
