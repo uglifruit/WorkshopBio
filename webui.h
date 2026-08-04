@@ -34,6 +34,8 @@ enum : uint8_t {
 	MSG_UP_ERR     = 0x16,  // fw->ui: something went wrong; payload = code
 	MSG_ERASE      = 0x20,  // ui->fw: forget user samples, revert to baked
 	MSG_PLAY       = 0x21,  // ui->fw: leave USB mode and reboot into playing
+	MSG_CLEARMODE  = 0x22,  // ui->fw: revert ONE mode to its baked recordings
+	MSG_SLOTS      = 0x23,  // fw->ui: which slots currently hold user audio
 	MSG_PROF_GET   = 0x30,  // ui->fw: send the timing peaks (profile builds)
 	MSG_PROF       = 0x31,  // fw->ui: peak cycles per bucket + overrun count
 };

@@ -96,6 +96,14 @@
       and they survive until this button reads them. So: play the mode you want
       to test, <em>then</em> hold, connect, and click.
     </p>
+    <p class="note" style="margin:0 0 .75rem">
+      <strong>Each row is its own worst sample, so they do not add up.</strong>
+      The physics run on one sample in 32 and the voices run on all of them, so
+      Engine's peak and Voices' peak are almost never the same sample — their sum
+      routinely exceeds Total, which is the worst <em>single</em> sample and the
+      only figure the budget applies to. Compare a row against itself between
+      builds, never against the others.
+    </p>
     <table id="proftable"></table>
   </div>
 
@@ -131,7 +139,7 @@ const MFR = 0x7D;
 const MSG = {
   HELLO:0x01, INFO:0x02, UP_BEGIN:0x10, UP_SLOT:0x11, UP_CHUNK:0x12,
   UP_SLOTEND:0x13, UP_END:0x14, ACK:0x15, ERR:0x16, ERASE:0x20,
-  PLAY:0x21, PROF_GET:0x30, PROF:0x31,
+  PLAY:0x21, CLEARMODE:0x22, SLOTS:0x23, PROF_GET:0x30, PROF:0x31,
 };
 
 // Cycles available per sample: 125MHz / 48kHz. Matches kCycleBudget in profile.h.
@@ -148,7 +156,11 @@ const MODES = [
 ];
 
 const SR = 48000;
-const state = { midiOut:null, midiIn:null, slots:{}, info:null };
+// slots  = what is staged in this page, not yet sent
+// onCard = what the card reports it is actually playing, per mode: a bitmask of
+//          which variants hold uploaded audio. The two are different, and the
+//          difference is the whole point of showing it.
+const state = { midiOut:null, midiIn:null, slots:{}, info:null, onCard:null };
 
 // --- audio conversion ------------------------------------------------------
 
@@ -302,12 +314,38 @@ async function connect() {
     send([MSG.HELLO]);
     const info = await waitAck(1500).catch(() => null);
     if (info && info[2] === MSG.INFO) {
+      // cap is the PER-UPLOAD transfer limit (the card's RAM staging buffer);
+      // used/total describe the flash region. They are different things, and
+      // conflating them made a card with 900KB free report "too big".
       const cap = (info[6] << 14) | (info[7] << 7) | info[8];
       const user = info[4] === 1;
-      state.info = { cap, user };
-      setStatus(`Connected. ${(cap / 1024 / 1024).toFixed(1)} MB for samples` +
-                (user ? " — user samples currently loaded." : " — using built-in samples."), "ok");
+      // info[] is the raw SysEx (F0 7D <payload> F7), so payload[k] is info[k+2].
+      const used  = info.length > 12 ? ((info[10] << 14) | (info[11] << 7) | info[12]) : 0;
+      const total = info.length > 15 ? ((info[13] << 14) | (info[14] << 7) | info[15]) : 0;
+      state.info = { cap, user, used, total };
+
+      const kb = (n) => `${Math.round(n / 1024)} KB`;
+      let msg = `Connected. `;
+      if (total) {
+        const free = Math.max(0, total - used);
+        msg += `${kb(free)} free of ${kb(total)} on the card, ` +
+               `${kb(cap)} per upload. `;
+      }
+      msg += user ? "User samples loaded." : "Using built-in samples.";
+      setStatus(msg, "ok");
       document.getElementById("revert").disabled = !user;
+
+      // Ask what is actually on the card, so each mode can say whether it is
+      // playing uploads or the built-in recordings.
+      send([MSG.SLOTS]);
+      const sl = await waitAck(1500).catch(() => null);
+      if (sl && sl[2] === MSG.SLOTS) {
+        const nm = sl[3];
+        state.onCard = [];
+        for (let m = 0; m < nm; m++)
+          state.onCard.push(sl[4 + m*2] | (sl[5 + m*2] << 7));
+      }
+      updateUsage();
     } else {
       setStatus("Connected, but the card did not identify itself.", "err");
     }
@@ -336,9 +374,25 @@ async function upload() {
   });
 
   const total = prepared.reduce((n, p) => n + p.bytes.length, 0);
+  const kb = (n) => `${Math.round(n / 1024)} KB`;
+
+  // Two different limits, and saying which one you hit matters. The per-upload
+  // cap is the card's RAM staging buffer, not how much it can store — uploads
+  // append, so the same audio usually fits across two passes. Reporting this as
+  // "the card is full" would send people deleting samples they did not need to.
   if (state.info && total > state.info.cap) {
-    setStatus(`Too much audio: ${(total/1024)|0} KB, card holds ${(state.info.cap/1024)|0} KB.`, "err");
+    setStatus(`${kb(total)} is more than the ${kb(state.info.cap)} the card can ` +
+              `take in ONE upload. It has room — send some modes now and the ` +
+              `rest in a second pass; uploads add to what is already there.`, "err");
     return;
+  }
+  if (state.info && state.info.total) {
+    const free = Math.max(0, state.info.total - state.info.used);
+    if (total > free) {
+      setStatus(`${kb(total)} will not fit in the ${kb(free)} left on the card. ` +
+                `Use "Revert to built-in" to clear it and start again.`, "err");
+      return;
+    }
   }
 
   const prog = document.getElementById("prog");
@@ -412,7 +466,13 @@ async function readProfile() {
     for (let i = 0; i < n; i++) {
       const c = val(i), pct = (c / BUDGET) * 100;
       const over = c > BUDGET;
-      rows.push(`<tr><td>${PROF_NAMES[i] || i}</td>` +
+      // Only Total is a whole sample; the rest are phases whose peaks land on
+      // different samples. Saying so per row stops the table reading as a
+      // breakdown that ought to sum.
+      const isTotal = i === 0;
+      const label = isTotal ? "<strong>Total</strong> (worst whole sample)"
+                            : `${PROF_NAMES[i] || i} <span class="note">(own worst sample)</span>`;
+      rows.push(`<tr><td>${label}</td>` +
                 `<td style="color:${over ? "var(--err)" : "var(--text)"}">` +
                 `${c} cycles</td>` +
                 `<td style="color:${over ? "var(--err)" : "var(--dim)"}">` +
@@ -457,6 +517,21 @@ async function backToPlaying() {
   }
 }
 
+// Revert ONE mode to its built-in recordings, leaving other modes' uploads
+// alone. Rewrites the header only, so it costs a single sector write.
+async function clearMode(mi, name) {
+  try {
+    send([MSG.CLEARMODE, mi]);
+    await waitAck(4000).catch(() => null);
+    setStatus(`${name} reverted to built-in — the card is restarting.`, "ok");
+    for (const id of ["upload", "revert", "prof", "play"])
+      document.getElementById(id).disabled = true;
+    document.getElementById("connect").disabled = false;
+  } catch (e) {
+    setStatus("Could not revert that mode: " + e.message, "err");
+  }
+}
+
 async function revert() {
   try {
     // Also reboots the card, so the ack may not arrive. Reverting is how space
@@ -469,6 +544,7 @@ async function revert() {
     // "will play only these two" note would be describing a card that no
     // longer exists.
     state.slots = {};
+    state.onCard = null;   // the card is back to built-in everywhere
     for (const el of document.querySelectorAll(".slot")) {
       el.classList.remove("filled");
       const len = el.querySelector(".len");
@@ -525,6 +601,17 @@ function build() {
     note.id = `use${mi}`;
     div.appendChild(note);
 
+    // Per-mode revert. Only rewrites the header, so one mode can go back to its
+    // built-in recordings without disturbing the uploads in every other mode.
+    const clr = document.createElement("button");
+    clr.className = "ghost";
+    clr.id = `clr${mi}`;
+    clr.hidden = true;
+    clr.style.cssText = "font-size:.8rem;padding:.3rem .7rem";
+    clr.textContent = `Revert ${name} to built-in`;
+    clr.onclick = () => clearMode(mi, name);
+    div.appendChild(clr);
+
     wrap.appendChild(div);
   });
   updateUsage();
@@ -536,6 +623,19 @@ function updateUsage() {
     const el = document.getElementById(`use${mi}`);
     if (!el) return;
 
+    // What the CARD is playing right now, independent of anything staged here.
+    const bits = state.onCard ? state.onCard[mi] : 0;
+    const onCardN = bits ? (bits.toString(2).match(/1/g) || []).length : 0;
+    const btn = document.getElementById(`clr${mi}`);
+    if (btn) btn.hidden = !onCardN;
+
+    const cardLine = onCardN
+      ? `<span style="color:var(--accent)">● On the card: ${onCardN} uploaded ` +
+        `${onCardN === 1 ? "variant" : "variants"}, replacing the built-in ` +
+        `${name.toLowerCase()}.</span><br>`
+      : `<span style="color:var(--dim)">○ On the card: built-in ` +
+        `${name.toLowerCase()}.</span><br>`;
+
     // Count the leading run, because that is what the firmware uses: the round
     // robin picks an index below the count, so a gap would let it land on a slot
     // that was never filled.
@@ -544,19 +644,20 @@ function updateUsage() {
     const total = Object.keys(state.slots)
                         .filter(k => k.startsWith(`${mi}:`)).length;
 
+    let staged;
     if (total === 0) {
-      el.textContent = `Using all ${count} built-in variants.`;
-      el.style.color = "";
+      staged = "";   // nothing staged here; the card line above says it all
     } else if (run < total) {
       // Filled out of order: the slots after the gap would be ignored.
-      el.textContent = `⚠ Fill from slot 1 with no gaps — ${run || "none"} ` +
-                       `would be used, the rest ignored.`;
-      el.style.color = "var(--err)";
+      staged = `<span style="color:var(--err)">⚠ Fill from slot 1 with no gaps — ` +
+               `${run || "none"} would be used, the rest ignored.</span>`;
     } else {
-      el.textContent = `✓ Will play only these ${run} — the built-in ` +
-                       `${name.toLowerCase()} are not mixed in.`;
-      el.style.color = "var(--accent)";
+      staged = `<span style="color:var(--accent)">✓ Ready to send ${run} — will ` +
+               `play only these, not mixed with the built-in ` +
+               `${name.toLowerCase()}.</span>`;
     }
+    el.innerHTML = cardLine + staged;
+    el.style.color = "";
   });
 }
 

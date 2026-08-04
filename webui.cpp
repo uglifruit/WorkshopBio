@@ -335,7 +335,16 @@ void __not_in_flash_func(WebUI::HandleSysex)(const uint8_t *msg, uint32_t len)
 	{
 		// Report version, capacity and whether user samples are loaded, so the
 		// browser can show what is actually on the card.
-		uint8_t info[8] = {
+		// Bytes already committed, so the browser can say how much room is left.
+		uint32_t used = 0;
+		if (HaveUserSamples())
+		{
+			const UserSampleHeader *uh = UserHeader();
+			used = uh->totalBytes;
+			if (used > kUserDataLen) used = kUserDataLen;
+		}
+
+		uint8_t info[14] = {
 			MSG_INFO, kUserVersion,
 			static_cast<uint8_t>(HaveUserSamples() ? 1 : 0),
 			static_cast<uint8_t>(kHaveSamples ? 1 : 0),
@@ -345,8 +354,19 @@ void __not_in_flash_func(WebUI::HandleSysex)(const uint8_t *msg, uint32_t len)
 			static_cast<uint8_t>((kUploadMax >> 14) & 0x7F),
 			static_cast<uint8_t>((kUploadMax >> 7)  & 0x7F),
 			static_cast<uint8_t>( kUploadMax        & 0x7F),
-			static_cast<uint8_t>(kNumModes) };
-		Send(info, 8);
+			static_cast<uint8_t>(kNumModes),
+			// How much of the 1MB region is spoken for, and how big it is. The
+			// per-upload cap above is a TRANSFER limit set by the RAM buffer, not
+			// a storage limit -- uploads append, so several passes fill the card.
+			// Without these the browser can only report the transfer cap, and
+			// "too big" reads as "the card is full" when it usually is not.
+			static_cast<uint8_t>((used >> 14) & 0x7F),
+			static_cast<uint8_t>((used >> 7)  & 0x7F),
+			static_cast<uint8_t>( used        & 0x7F),
+			static_cast<uint8_t>((kUserDataLen >> 14) & 0x7F),
+			static_cast<uint8_t>((kUserDataLen >> 7)  & 0x7F),
+			static_cast<uint8_t>( kUserDataLen        & 0x7F) };
+		Send(info, 14);
 		break;
 	}
 
@@ -545,6 +565,65 @@ void __not_in_flash_func(WebUI::HandleSysex)(const uint8_t *msg, uint32_t len)
 		FlushUsb(200);
 		watchdog_reboot(0, 0, 0);
 		break;
+
+	case MSG_SLOTS:
+	{
+		// One septet per mode: bit v set means slot v holds user audio. Lets the
+		// browser show what is actually ON THE CARD rather than only what is
+		// staged in the page, which is the difference between "these two geese
+		// are loaded" and "these two geese are what the card will play".
+		// TWO septets per mode, not one: SysEx data bytes carry 7 bits and there
+		// are 8 variants, so a single byte would silently drop slot 8.
+		static_assert(kNumVariants <= 14, "two septets per mode covers 14 slots");
+		uint8_t sl[2 + kNumModes * 2];
+		uint32_t o = 0;
+		sl[o++] = MSG_SLOTS;
+		sl[o++] = static_cast<uint8_t>(kNumModes);
+		const UserSampleHeader *h = UserHeader();
+		bool have = HaveUserSamples();
+		for (int m = 0; m < kNumModes; m++)
+		{
+			uint32_t bits = 0;
+			if (have)
+				for (int v = 0; v < kNumVariants; v++)
+					if (h->size[m][v] > 0) bits |= (1u << v);
+			sl[o++] = static_cast<uint8_t>( bits       & 0x7F);
+			sl[o++] = static_cast<uint8_t>((bits >> 7) & 0x7F);
+		}
+		Send(sl, o);
+		break;
+	}
+
+	case MSG_CLEARMODE:
+	{
+		// Revert ONE mode to its baked recordings, leaving every other mode's
+		// uploads alone. Only the header changes: the audio stays in flash but
+		// becomes unreferenced, and ResolveSample falls back per-slot, so this
+		// costs one sector write rather than a rewrite of the whole region.
+		if (n < 2) { SendErr(ERR_PROTOCOL); break; }
+		uint8_t m = p[1];
+		if (m >= kNumModes) { SendErr(ERR_BAD_SLOT); break; }
+		if (!HaveUserSamples()) { SendAck(7, 0); break; }
+
+		EnterUploadMode();
+
+		memcpy(&hdr_, UserHeader(), sizeof(hdr_));
+		for (int v = 0; v < kNumVariants; v++)
+		{
+			hdr_.offset[m][v] = 0;
+			hdr_.size[m][v]   = 0;
+		}
+		// totalBytes is the append high-water mark, deliberately NOT reduced:
+		// the freed audio sits in the middle of the region, so pulling the mark
+		// back would let the next upload overwrite a mode that is still in use.
+		// "Revert to built-in" is what reclaims the space.
+		CommitHeader();
+
+		SendAck(7, 0);
+		FlushUsb(150);
+		watchdog_reboot(0, 0, 0);
+		break;
+	}
 
 	case MSG_PLAY:
 		// Leave USB mode and go back to being an instrument. No flash is touched
