@@ -95,6 +95,16 @@ static inline SampleRef ResolveSample(int mode, int variant)
 	return { nullptr, 0 };
 }
 
+/// True if a mode has ANY uploaded audio, so it should ignore its baked set.
+static inline bool ModeIsUserLoaded(int mode)
+{
+	if (!HaveUserSamples()) return false;
+	const UserSampleHeader *h = UserHeader();
+	for (int v = 0; v < kNumVariants; v++)
+		if (h->size[mode][v] > 0) return true;
+	return false;
+}
+
 /// How many round-robin variants a mode should actually use.
 ///
 /// If ANY slot of a mode has been uploaded, only the uploaded ones count. Upload
@@ -102,19 +112,40 @@ static inline SampleRef ResolveSample(int mode, int variant)
 /// own, which is what a blind round robin over all eight slots would give you and
 /// is never what someone replacing a mode wants.
 ///
-/// Counts the leading run rather than the total, because the round robin picks an
-/// index below the returned value: a gap would otherwise let it land on a slot
-/// that was never filled. The web UI fills slot 1 upwards for this reason.
+/// Counts the TOTAL, not the leading run. An earlier version counted the run and
+/// so silently ignored everything after a gap, which made "add a sample to slot
+/// 5" behave as if nothing had been uploaded. Gaps are handled by
+/// PickUserVariant() instead, which walks past empty slots — so any combination
+/// of filled slots works and the browser does not have to police the order.
 static inline int VariantCount(int mode)
 {
 	if (HaveUserSamples())
 	{
 		const UserSampleHeader *h = UserHeader();
 		int n = 0;
-		while (n < kNumVariants && h->size[mode][n] > 0) n++;
+		for (int v = 0; v < kNumVariants; v++)
+			if (h->size[mode][v] > 0) n++;
 		if (n > 0) return n;
 	}
 	return kHaveSamples ? kNumVariants : 0;
+}
+
+/// Map a 0..VariantCount-1 pick onto an actual filled slot, skipping gaps.
+///
+/// For a mode with no uploads this is the identity, so baked sets are unchanged.
+static inline int PickUserVariant(int mode, int pick)
+{
+	if (!ModeIsUserLoaded(mode)) return pick;
+
+	const UserSampleHeader *h = UserHeader();
+	int seen = 0;
+	for (int v = 0; v < kNumVariants; v++)
+	{
+		if (h->size[mode][v] == 0) continue;
+		if (seen == pick) return v;
+		seen++;
+	}
+	return 0;   // pick out of range: fall back to the first filled slot
 }
 
 /// True if there is anything at all to play — either source.

@@ -169,8 +169,10 @@ void __not_in_flash_func(VoiceBank::selectVariantAndPan)(Voice &v, int agent, Mo
 		do {
 			pick = static_cast<uint8_t>(xorshift32(rng_) % static_cast<uint32_t>(n));
 		} while (pick == lastVariant_[agent] && n > 1);
-		v.variant = pick;
 		lastVariant_[agent] = pick;
+		// Map onto a slot that actually holds audio, so uploading to slots 1 and
+		// 5 works as well as 1 and 2 — the browser does not have to police order.
+		v.variant = static_cast<uint8_t>(PickUserVariant(mi, pick));
 	}
 
 	switch (kPanMode[mi])
@@ -394,8 +396,8 @@ void __not_in_flash_func(VoiceBank::droneUpdate)(Mode m, const int32_t *state, i
 			// actually has, so two uploaded geese do not get mixed with six baked.
 			int nvar = VariantCount(mi);
 			if (nvar < 1) nvar = 1;
-			uint8_t var = static_cast<uint8_t>(
-				xorshift32(d.rng) % static_cast<uint32_t>(nvar));
+			uint8_t var = static_cast<uint8_t>(PickUserVariant(mi,
+				static_cast<int>(xorshift32(d.rng) % static_cast<uint32_t>(nvar))));
 			SampleRef sr = ResolveSample(mi, var);
 			g.pcm = sr.data;
 			g.len = sr.len;

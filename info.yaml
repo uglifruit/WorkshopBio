@@ -34,7 +34,7 @@ tags:
 
 summary: |
   BioMimicry uses six mathematical physics engines to generate triggers, CV and
-  audio that feel organically alive.
+  audio that feel organically alive.<br><br>
 
   Tap the momentary switch to cycle six ecosystems. HORSES: a herd, each animal
   running its own stride clock driving four hooves at their real equine footfall
@@ -46,17 +46,16 @@ summary: |
   splash downstream into each other when they overflow. METEORS: an
   inhomogeneous Poisson process where a hidden weather system swells a swarm from
   eerie silence into dense overlapping barrages. CICADAS: four patches of insects
-  coupled on loudness rather than on phase or events, swelling out of step.
+  coupled on loudness rather than on phase or events, swelling out of step.<br><br>
 
   Voices are animal recordings with up to eight round robins each. In Horses
   the round robins are the four hooves, so a gait sounds like an animal rather
-  than a drum machine.
+  than a drum machine.<br><br>
 
   Hold the momentary switch at power-on to boot DRONE, which granulates the same
-  recordings into continuous texture instead of firing them as one-shots.
+  recordings into continuous texture instead of firing them as one-shots.<br><br>
 
-  Samples can be replaced from a browser over USB - see the editor link - with no
-  rebuild and no toolchain.
+  Samples can be replaced from a browser over USB.
 
 panel:
   inputs:

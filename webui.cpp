@@ -437,14 +437,17 @@ void __not_in_flash_func(WebUI::HandleSysex)(const uint8_t *msg, uint32_t len)
 			SendErr(ERR_BAD_SLOT);
 			break;
 		}
-		// The FIRST slot sent for a mode clears every other slot of that mode.
+		// Optional 4th byte: 1 = this upload REPLACES the mode, 0/absent = ADDS
+		// to it. The browser decides, because only it knows whether the user
+		// filled a fresh set or is topping up what is already on the card.
 		//
-		// Replacing a mode means replacing it: uploading two geese over a
-		// previous set of eight must leave two, not two plus six survivors. The
-		// firmware then rounds the round robin down to what is present, so the
-		// card plays exactly what was sent. Without this, the stale sizes from
-		// the earlier upload would keep the old recordings in the rotation.
-		if (!modeCleared_[slotMode_])
+		// Clearing unconditionally on the first slot was wrong and destroyed
+		// data: uploading just slot 2 to sit alongside an existing slot 1 wiped
+		// slot 1. Replacing a mode must still mean replacing it, so a set of two
+		// over a previous eight leaves two rather than two plus six survivors —
+		// but that is a choice the sender makes, not something to assume.
+		bool replaceMode = (n >= 4) && (p[3] != 0);
+		if (replaceMode && !modeCleared_[slotMode_])
 		{
 			modeCleared_[slotMode_] = true;
 			for (int v = 0; v < kNumVariants; v++)
