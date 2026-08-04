@@ -128,9 +128,11 @@
     only for that last step, then reboots into your new samples.
   </p>
   <p class="note">
-    Uploads <strong>add to</strong> what is already on the card, so space is used
-    up by repeated uploads to the same slot. <strong>Revert to built-in</strong>
-    empties the region and reclaims it all.
+    Uploads <strong>add to</strong> what is already on the card — send one sample,
+    listen to it, then send another and you end up with both. To clear a mode,
+    use its own <strong>Revert … to built-in</strong> button; to clear everything
+    and reclaim the space, use <strong>Revert to built-in</strong> above. Space is
+    consumed by every upload, including replacements of the same slot.
   </p>
 </main>
 
@@ -166,11 +168,7 @@ const SR = 48000;
 // slots       = what is staged in this page, not yet sent
 // onCard      = what the card reports it is actually playing, per mode: a
 //               bitmask of which variants hold uploaded audio
-// replaceMode = per mode, whether the next upload wipes that mode first. Off by
-//               default, so uploading one sample now and another later ADDS the
-//               second rather than destroying the first.
-const state = { midiOut:null, midiIn:null, slots:{}, info:null,
-                onCard:null, replaceMode:{} };
+const state = { midiOut:null, midiIn:null, slots:{}, info:null, onCard:null };
 
 // --- audio conversion ------------------------------------------------------
 
@@ -419,11 +417,10 @@ async function upload() {
 
     let done = 0;
     for (const p of prepared) {
-      // 4th byte: 1 = replace this mode, 0 = add to what is already there.
-      // "Replace" only when the mode is marked for it, so uploading one sample
-      // now and another later adds a second variant instead of wiping the first.
-      send([MSG.UP_SLOT, p.mode, p.variant,
-            state.replaceMode[p.mode] ? 1 : 0]);
+      // 4th byte 0 = ADD to what is already on the card. Uploads never wipe a
+      // mode: "Revert X to built-in" is how you clear one, which is an explicit
+      // button rather than a tickbox whose effect only shows after a reboot.
+      send([MSG.UP_SLOT, p.mode, p.variant, 0]);
       await waitAck();
 
       // Chunk small enough that an encoded SysEx stays comfortable over USB.
@@ -457,14 +454,11 @@ async function upload() {
     // that is no longer true; reconnecting re-reads both.
     state.slots = {};
     state.onCard = null;
-    state.replaceMode = {};
     for (const el of document.querySelectorAll(".slot")) {
       el.classList.remove("filled", "oncard");
       const len = el.querySelector(".len");
       if (len) len.textContent = "empty";
     }
-    for (const el of document.querySelectorAll('input[type="checkbox"]'))
-      el.checked = false;
     updateUsage();
 
     document.getElementById("revert").disabled = false;
@@ -642,22 +636,6 @@ function build() {
     clr.onclick = () => clearMode(mi, name);
     div.appendChild(clr);
 
-    // Add vs replace. Default is ADD, because trying one sample and then adding
-    // another is the normal way to work — the destructive option should be the
-    // one you ask for. Only offered once the mode has something on the card.
-    const rep = document.createElement("label");
-    rep.id = `rep${mi}`;
-    rep.hidden = true;
-    rep.className = "note";
-    rep.style.cssText = "margin-left:.6rem;cursor:pointer";
-    rep.innerHTML = `<input type="checkbox" id="repbox${mi}"> ` +
-                    `replace all of ${name} instead of adding`;
-    rep.querySelector("input").onchange = (e) => {
-      state.replaceMode[mi] = e.target.checked;
-      updateUsage();
-    };
-    div.appendChild(rep);
-
     wrap.appendChild(div);
   });
   updateUsage();
@@ -674,8 +652,6 @@ function updateUsage() {
     const onCardN = bits ? (bits.toString(2).match(/1/g) || []).length : 0;
     const clr = document.getElementById(`clr${mi}`);
     if (clr) clr.hidden = !onCardN;
-    const rep = document.getElementById(`rep${mi}`);
-    if (rep) rep.hidden = !onCardN;
 
     // Mark the slots the card already has, so it is obvious what you are adding
     // to. Staged files win the label, since those are about to overwrite.
@@ -691,8 +667,6 @@ function updateUsage() {
 
     const staged = Object.keys(state.slots)
                          .filter(k => k.startsWith(`${mi}:`)).length;
-    const replacing = !!state.replaceMode[mi];
-
     // HORSES IS NOT A ROUND ROBIN. Its four variants are the four hooves, picked
     // by which foot actually landed, so it always uses all four and a partial
     // upload simply falls back to the built-in hoof for the slots left empty.
@@ -717,14 +691,11 @@ function updateUsage() {
 
     let stagedLine = "";
     if (staged) {
-      const after = replacing ? staged : onCardN + staged;
+      const after = onCardN + staged;
       if (hooves) {
         stagedLine = `<span style="color:var(--accent)">✓ ${staged} to send. ` +
                      `Horses always plays all four hooves; empty slots keep the ` +
                      `built-in one.</span>`;
-      } else if (replacing) {
-        stagedLine = `<span style="color:var(--warn)">⚠ Will REPLACE all of ` +
-                     `${name.toLowerCase()} with these ${staged}.</span>`;
       } else {
         stagedLine = `<span style="color:var(--accent)">✓ Will add ${staged} — ` +
                      `${after} in the rotation afterwards.</span>`;

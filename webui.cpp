@@ -438,14 +438,14 @@ void __not_in_flash_func(WebUI::HandleSysex)(const uint8_t *msg, uint32_t len)
 			break;
 		}
 		// Optional 4th byte: 1 = this upload REPLACES the mode, 0/absent = ADDS
-		// to it. The browser decides, because only it knows whether the user
-		// filled a fresh set or is topping up what is already on the card.
+		// to it. The stock web UI always sends 0 — clearing a mode is done with
+		// MSG_CLEARMODE, an explicit button, rather than a flag on an upload
+		// whose effect only becomes visible after the card reboots.
 		//
-		// Clearing unconditionally on the first slot was wrong and destroyed
-		// data: uploading just slot 2 to sit alongside an existing slot 1 wiped
-		// slot 1. Replacing a mode must still mean replacing it, so a set of two
-		// over a previous eight leaves two rather than two plus six survivors —
-		// but that is a choice the sender makes, not something to assume.
+		// The flag stays in the protocol because it is free and because a
+		// different client may want a one-shot replace. Clearing unconditionally
+		// on the first slot was the bug it replaced: uploading just slot 2 to sit
+		// alongside an existing slot 1 wiped slot 1.
 		bool replaceMode = (n >= 4) && (p[3] != 0);
 		if (replaceMode && !modeCleared_[slotMode_])
 		{
