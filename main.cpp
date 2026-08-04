@@ -55,9 +55,13 @@ public:
 	/// being erased, and LedOn() only pokes a PWM register, so it is safe there.
 	void __not_in_flash_func(showUploadProgress)()
 	{
-		int32_t prog = gWebUI ? gWebUI->Progress() : 0;
-		int lit = (prog * 6) >> 16;
-		for (int i = 0; i < 6; i++) LedOn(static_cast<uint32_t>(i), i < lit);
+		// The LEDs show WebUI::stage as a binary count, not a progress bar.
+		// A hang in the upload path also stops USB, so the card cannot report it
+		// over the wire -- whatever number is frozen here is the last step that
+		// completed, which is the only diagnostic available from outside.
+		uint8_t st = WebUI::stage;
+		for (int i = 0; i < 6; i++)
+			LedOn(static_cast<uint32_t>(i), (st >> i) & 1);
 	}
 
 	BioMimicryCard()

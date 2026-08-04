@@ -15,6 +15,7 @@ namespace bio {
 
 volatile bool WebUI::uploadMode = false;
 volatile bool WebUI::core0Parked = false;
+volatile uint8_t WebUI::stage = 0;
 
 // ---------------------------------------------------------------------------
 // 7-bit encoding
@@ -92,6 +93,7 @@ static void EnterUploadMode()
 	// Either one faults the instant flash_range_erase kills XIP. So core 0 now
 	// parks itself in RAM and says so, and only then is it safe to write.
 	WebUI::uploadMode = true;
+	WebUI::stage = 1;
 
 	// Wait for the park BEFORE masking anything. ProcessSample only runs when
 	// DMA_IRQ_0 fires, so masking first would guarantee it never sees the flag
@@ -99,10 +101,23 @@ static void EnterUploadMode()
 	absolute_time_t deadline = make_timeout_time_ms(250);
 	while (!WebUI::core0Parked && !time_reached(deadline)) tight_loop_contents();
 
+	WebUI::stage = 2;
+
 	// Now that core 0 is spinning in RAM, silence the flash-resident ISRs so
 	// nothing can re-enter them while XIP is down.
 	irq_set_enabled(DMA_IRQ_0, false);
 	irq_set_enabled(PWM_IRQ_WRAP, false);
+
+	// Prime the SDK's boot2 copy while XIP is definitely still up.
+	//
+	// flash_range_erase/program restore XIP afterwards by calling a RAM copy of
+	// the boot2 stage, and flash_init_boot2_copyout() lazily populates that copy
+	// by reading FROM XIP the first time any flash function runs. A zero-length
+	// erase reaches that initialiser (it runs before the "no flash accesses"
+	// barrier) and does nothing else, so the copy is taken here, unhurried,
+	// rather than during the first real write.
+	flash_range_erase(kUserRegionOff, 0);
+	WebUI::stage = 3;
 }
 
 /// Keep servicing USB for `ms` so queued replies actually reach the host.
@@ -181,6 +196,17 @@ void __not_in_flash_func(WebUI::Task)()
 			if (inSysex_ && rxLen_ < sizeof(rx_)) rx_[rxLen_++] = b;
 		}
 	}
+
+	// Anything queued by a reply above is pushed here, outside the packet loop,
+	// where re-entering tud_task() is safe. During an upload the next thing the
+	// caller does is an erase or a page program with interrupts off, so without
+	// this the ack would sit in the FIFO while the browser -- which waits for one
+	// before sending the next chunk -- timed out.
+	if (txPending_)
+	{
+		txPending_ = false;
+		tud_task();
+	}
 }
 
 void __not_in_flash_func(WebUI::Send)(const uint8_t *payload, uint32_t len)
@@ -195,22 +221,13 @@ void __not_in_flash_func(WebUI::Send)(const uint8_t *payload, uint32_t len)
 	buf[o++] = 0xF7;
 	tud_midi_stream_write(0, buf, o);
 
-	// tud_midi_stream_write only fills the FIFO; this TinyUSB has no MIDI flush,
-	// so tud_task() is the only thing that moves it onto the wire. During an
-	// upload the caller goes straight into an erase or a page program, which
-	// blocks with interrupts off, so a queued ack would sit there while the
-	// browser -- which waits for one before sending the next chunk -- timed out.
+	// Do NOT call tud_task() here to push it out. That was tried, and it is a
+	// reentrancy bug: Send() is reached from inside Task()'s packet loop via
+	// HandleSysex(), so a nested tud_task() re-enters that loop and corrupts
+	// rx_/rxLen_ half way through parsing the message being replied to.
 	//
-	// Guarded against unbounded recursion: this runs inside tud_task(), and the
-	// nested call can itself deliver a SysEx that calls Send() again. One level
-	// is enough to get the bytes moving; deeper nesting is suppressed, and any
-	// RX that arrives meanwhile is picked up by the outer loop as usual.
-	if (!pumping_)
-	{
-		pumping_ = true;
-		tud_task();
-		pumping_ = false;
-	}
+	// Task() flushes on the way out instead -- see the pump at the end of it.
+	txPending_ = true;
 }
 
 void __not_in_flash_func(WebUI::SendAck)(uint8_t code, uint32_t value)
@@ -314,6 +331,8 @@ void __not_in_flash_func(WebUI::HandleSysex)(const uint8_t *msg, uint32_t len)
 			writeOff_ = 0;
 		}
 
+		WebUI::stage = 4;
+
 		// New audio is appended after whatever is already stored, and the append
 		// point is rounded UP to a sector boundary. Erase works a whole sector at
 		// a time, so starting mid-sector would erase the tail of the recording
@@ -329,6 +348,7 @@ void __not_in_flash_func(WebUI::HandleSysex)(const uint8_t *msg, uint32_t len)
 			               & ~(kFlashSector - 1u);
 			if (end > pageAddr_) EraseRegion(pageAddr_, end - pageAddr_);
 		}
+		WebUI::stage = 5;
 		SendAck(0, 0);
 		break;
 	}
@@ -371,6 +391,7 @@ void __not_in_flash_func(WebUI::HandleSysex)(const uint8_t *msg, uint32_t len)
 		}
 		writeOff_ += got;
 		hdr_.size[slotMode_][slotVariant_] += got;
+		WebUI::stage = 6;
 		SendAck(2, writeOff_);
 		break;
 	}
@@ -383,6 +404,7 @@ void __not_in_flash_func(WebUI::HandleSysex)(const uint8_t *msg, uint32_t len)
 	case MSG_UP_END:
 		if (!uploading_) { SendErr(ERR_PROTOCOL); break; }
 		CommitHeader();
+		WebUI::stage = 7;
 		uploading_ = false;
 		SendAck(4, writeOff_);
 

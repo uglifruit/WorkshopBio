@@ -76,6 +76,14 @@ public:
 	/// drops, which hard-faults the chip.
 	static volatile bool core0Parked;
 
+	/// How far the upload got, shown on the LEDs as a binary count while
+	/// uploadMode is set. USB cannot report a hang that stops USB, so the card
+	/// has to signal out of band: 1 entered upload mode, 2 core 0 parked,
+	/// 3 boot2 primed, 4 header read, 5 erase done, 6 first chunk written,
+	/// 7 header committed. Whatever number is frozen on the LEDs is the last
+	/// step that completed.
+	static volatile uint8_t stage;
+
 	/// 0..kQ16One, for the LED progress display.
 	int32_t Progress() const;
 
@@ -104,9 +112,9 @@ private:
 	uint8_t  rx_[1024];
 	uint32_t rxLen_ = 0;
 	bool     inSysex_ = false;
-	// Send() pumps tud_task() so replies leave immediately; this stops that
-	// nested call from recursing without bound.
-	bool     pumping_ = false;
+	// Set by Send(); Task() pushes the FIFO once it is out of its packet loop,
+	// where re-entering tud_task() cannot corrupt a half-parsed message.
+	bool     txPending_ = false;
 };
 
 } // namespace bio
