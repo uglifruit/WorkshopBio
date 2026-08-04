@@ -119,6 +119,29 @@ static inline int32_t __attribute__((always_inline)) mul_q15(int32_t a, int32_t 
 	return (a * g) >> 15;
 }
 
+/// Square root of a Q16 value in 0..65536, result Q16 in 0..65536.
+///
+/// Restoring bitwise integer sqrt: no libm, no float, no divide, and bounded at
+/// 16 iterations. Used to bend knob laws so the bottom of the travel moves
+/// fastest -- sqrt(x) rises steeply from zero, which is exactly the shape a
+/// control needs when its underlying model has a threshold near the bottom.
+static inline int32_t __attribute__((always_inline)) fast_sqrt_q16(int32_t x)
+{
+	if (x <= 0) return 0;
+	// sqrt(x/65536)*65536 == sqrt(x*65536), so widen before rooting.
+	uint32_t v = static_cast<uint32_t>(x) << 16;
+	uint32_t res = 0;
+	uint32_t bit = 1u << 30;
+	while (bit > v) bit >>= 2;
+	while (bit)
+	{
+		if (v >= res + bit) { v -= res + bit; res = (res >> 1) + bit; }
+		else                { res >>= 1; }
+		bit >>= 2;
+	}
+	return static_cast<int32_t>(res);
+}
+
 /// Clamp to the DAC's signed 12-bit range.
 static inline int16_t __attribute__((always_inline)) clamp12(int32_t v)
 {

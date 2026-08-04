@@ -28,6 +28,10 @@ using namespace bio;
 // lock is needed — the same discipline WorkshopZX uses for its CrossCore.
 static volatile bool  gUsbReady = false;
 static WebUI * volatile gWebUI = nullptr;
+// Core 1 drives the progress LEDs during an upload, when core 0's audio
+// interrupt is switched off and nothing else is left running.
+class BioMimicryCard;
+static BioMimicryCard * volatile gCard = nullptr;
 
 // Gate width for the pulse outs and the CV-out trigger blips: 5ms at 48kHz is
 // comfortably long enough for any drum module or envelope to register.
@@ -46,6 +50,16 @@ static constexpr int kSplashSamples = 48000;           // ~1s
 class BioMimicryCard : public ComputerCard
 {
 public:
+	/// Progress bar during an upload, called from core 1 because core 0's audio
+	/// interrupt is switched off by then. RAM-resident: this runs while flash is
+	/// being erased, and LedOn() only pokes a PWM register, so it is safe there.
+	void __not_in_flash_func(showUploadProgress)()
+	{
+		int32_t prog = gWebUI ? gWebUI->Progress() : 0;
+		int lit = (prog * 6) >> 16;
+		for (int i = 0; i < 6; i++) LedOn(static_cast<uint32_t>(i), i < lit);
+	}
+
 	BioMimicryCard()
 	{
 		engines_[0] = &horses_;
@@ -63,26 +77,35 @@ public:
 	}
 
 	/// Core 1: nothing but USB. It must not touch anything core 0 owns.
-	static void core1Entry()
+	static void __not_in_flash_func(core1Entry)()
 	{
 		// Wait for core 0 to finish booting and construct the WebUI.
 		while (!gUsbReady) tight_loop_contents();
-		for (;;) gWebUI->Task();
+		for (;;)
+		{
+			gWebUI->Task();
+
+			// Once an upload starts, core 0's audio interrupt is off and this is
+			// the only core still running — so the progress LEDs have to be
+			// driven from here. LedOn() is RAM-resident and only writes a PWM
+			// register, so it stays safe even mid-erase.
+			if (WebUI::uploadMode && gCard) gCard->showUploadProgress();
+		}
 	}
 
 	virtual void __not_in_flash_func(ProcessSample)()
 	{
-		// Core 1 is about to erase or program flash, which disables XIP. Park
-		// here — this function is RAM-resident, so spinning is safe — and touch
-		// nothing until it is finished. Without this, any XIP fetch during the
-		// write would hard-fault.
-		if (WebUI::flashBusy)
-		{
-			AudioOut1(0);
-			AudioOut2(0);
-			while (WebUI::flashBusy) tight_loop_contents();
-			return;
-		}
+		// Flash writes no longer park here. The old version spun in this very
+		// function until core 1 finished, which deadlocked the card: this runs
+		// inside the DMA interrupt handler, so spinning for the seconds an erase
+		// takes starved the audio DMA and it never restarted — no sound, no LEDs,
+		// no switch, until a power cycle. Worse, ProcessSample is `virtual`, so
+		// merely DISPATCHING to it reads a vtable that lives in flash; with XIP
+		// down that faults before any park could be entered.
+		//
+		// Uploading now disables DMA_IRQ_0 outright and reboots when it finishes
+		// (see WebUI::BeginUploadMode), so this handler is not running at all
+		// while flash is being written and there is nothing to guard against.
 
 		// Times the WHOLE callback, which is the number that decides whether
 		// audio glitches — not the per-sample average.
@@ -113,6 +136,7 @@ public:
 				boot_ = (SwitchVal() == Switch::Down) ? BootMode::Drone
 				                                     : BootMode::Rhythm;
 				webui_.Init();
+				gCard  = this;
 				gWebUI = &webui_;
 				gUsbReady = true;      // releases core 1
 				voices_.init(AnySamples());
@@ -128,21 +152,11 @@ public:
 		}
 
 		// USB is serviced on core 1; nothing to do here. See core1Entry.
-		if (webui_.Uploading())
-		{
-			// Flash writes stall execution, so there is no point pretending the
-			// ecosystem is still running. Mute, show a progress bar on the LEDs,
-			// and let the upload have the machine.
-			AudioOut1(0);
-			AudioOut2(0);
-			PulseOut1(false);
-			PulseOut2(false);
-			int32_t prog = webui_.Progress();
-			int lit = (prog * 6) >> 16;
-			for (int i = 0; i < 6; i++) LedOn(i, i < lit);
-			if (++ctrlDiv_ >= kCtrlDiv) ctrlDiv_ = 0;
-			return;
-		}
+		//
+		// Uploads are NOT handled here any more. This handler stops being called
+		// at all once an upload starts (DMA_IRQ_0 is disabled), so the progress
+		// LEDs are driven from core 1 — see core1Entry. A progress bar rendered
+		// here would simply freeze on the first frame.
 
 		// ---- Boot splash -------------------------------------------------
 		// LEDs are 0 1 / 2 3 / 4 5. Rhythm lights the left column, Drone the

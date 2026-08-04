@@ -382,6 +382,24 @@ void __not_in_flash_func(VoiceBank::droneUpdate)(Mode m, const int32_t *state, i
 			g.pcm = sr.data;
 			g.len = sr.len;
 
+			// Window shape is fixed for the grain's whole life, so pay for the
+			// divide once here instead of 48000 times a second in the renderer.
+			//
+			// Scaled so dist*invHalf lands in Q16 after a fixed >>16, with the
+			// reciprocal itself kept just under 2^32. Half-lengths on this card
+			// run from 8 to ~500000 (meteors_5 is 118596 bytes and an uploaded
+			// recording can fill the 1MB user region), which is too wide a range
+			// for one fixed scale: a Q16 reciprocal truncates to 1 or 0 on the
+			// long samples -- a ~10% window skew, or a silent grain -- while a
+			// Q48 one overflows 32 bits on the short ones.
+			// halfLen < 2 would make the reciprocal itself overflow 32 bits; such
+			// a grain is a handful of samples and inaudible, so it windows to
+			// silence rather than being special-cased through the render loop.
+			uint32_t halfLen = g.len >> 1;
+			g.invHalf = (halfLen >= 2)
+				? static_cast<uint32_t>((static_cast<uint64_t>(1) << 32) / halfLen)
+				: 0;
+
 			// Start somewhere inside the sample, not always at the attack —
 			// repeated attacks would read as a rhythm rather than a texture.
 			uint32_t startMax = (g.len > 16) ? (g.len >> 1) : 0;
@@ -428,7 +446,12 @@ void __not_in_flash_func(VoiceBank::droneRender)(int active, int16_t &l, int16_t
 			// which is cheap and good enough at this density.
 			uint32_t half = g.len >> 1;
 			uint32_t dist = (idx < half) ? idx : (g.len - 1 - idx);
-			int32_t win = half ? static_cast<int32_t>((dist << 16) / half) : 0;
+			// A plain 32-bit multiply, no 64-bit helper call; >>16 lands it in
+			// Q16. dist is capped below half because an odd len lets dist reach
+			// half exactly, and half * (2^32/half) is exactly 2^32 -- which
+			// wraps to zero and turns the window's peak into silence.
+			if (dist >= half) dist = half ? half - 1 : 0;
+			int32_t win = static_cast<int32_t>((dist * g.invHalf) >> 16);
 			if (win > kQ16One) win = kQ16One;
 
 			mix += mul_q16(s, win) >> 1;

@@ -95,9 +95,15 @@
     replace one ecosystem and leave the rest alone.
   </p>
   <p class="note">
-    <strong>The card mutes while uploading.</strong> Writing flash halts the
-    RP2040's execution, so the ecosystem stops and the LEDs show a progress bar
-    until it finishes.
+    <strong>The card stops and restarts.</strong> Writing flash halts the
+    RP2040's execution, so the ecosystem stops, the LEDs show a progress bar, and
+    the card reboots into your new samples when it finishes. Uploading is a setup
+    activity, not a performance one.
+  </p>
+  <p class="note">
+    Uploads <strong>add to</strong> what is already on the card, so space is used
+    up by repeated uploads to the same slot. <strong>Revert to built-in</strong>
+    empties the region and reclaims it all.
   </p>
 </main>
 
@@ -313,8 +319,11 @@ async function upload() {
   setStatus("Erasing… the card is muted while this runs.");
 
   try {
+    // The card now erases only the sectors this upload needs, not the whole 1MB,
+    // so the stall is proportional to what is being sent. Still generous: an
+    // erase is tens of ms per sector and the card is silent throughout.
     send([MSG.UP_BEGIN, (total >> 14) & 0x7F, (total >> 7) & 0x7F, total & 0x7F]);
-    await waitAck(20000);      // the erase is a long stall
+    await waitAck(30000);
 
     let done = 0;
     for (const p of prepared) {
@@ -338,11 +347,16 @@ async function upload() {
       await waitAck();
     }
 
+    // The card acks UP_END and then REBOOTS, so it vanishes from WebMIDI a
+    // moment later. A missing ack here is normal, not a failure -- treating the
+    // disconnect as an error is what made a working upload look like a hang.
     send([MSG.UP_END]);
-    await waitAck(10000);
+    await waitAck(10000).catch(() => null);
     prog.value = 1;
-    setStatus("Done. The card is running your samples.", "ok");
+    setStatus("Done — the card is restarting with your samples. " +
+              "Reconnect to upload more.", "ok");
     document.getElementById("revert").disabled = false;
+    document.getElementById("connect").disabled = false;
   } catch (e) {
     setStatus("Upload failed: " + e.message, "err");
   } finally {
@@ -391,10 +405,13 @@ async function readProfile() {
 
 async function revert() {
   try {
+    // Also reboots the card, so the ack may not arrive. Reverting is how space
+    // is reclaimed too: uploads append, so this is the way to empty the region.
     send([MSG.ERASE]);
-    await waitAck(8000);
-    setStatus("Reverted to the built-in samples.", "ok");
+    await waitAck(8000).catch(() => null);
+    setStatus("Reverted to the built-in samples — the card is restarting.", "ok");
     document.getElementById("revert").disabled = true;
+    document.getElementById("connect").disabled = false;
   } catch (e) {
     setStatus("Could not revert: " + e.message, "err");
   }

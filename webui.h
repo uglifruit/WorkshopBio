@@ -25,7 +25,7 @@ namespace bio {
 enum : uint8_t {
 	MSG_HELLO      = 0x01,  // ui->fw: announce presence; fw replies MSG_INFO
 	MSG_INFO       = 0x02,  // fw->ui: version, capacity, what is loaded
-	MSG_UP_BEGIN   = 0x10,  // ui->fw: start upload session (erases the region)
+	MSG_UP_BEGIN   = 0x10,  // ui->fw: start upload session (stops audio; appends)
 	MSG_UP_SLOT    = 0x11,  // ui->fw: begin a mode+variant; payload mode,variant,len
 	MSG_UP_CHUNK   = 0x12,  // ui->fw: 7-bit-encoded audio for the current slot
 	MSG_UP_SLOTEND = 0x13,  // ui->fw: this slot is complete
@@ -62,14 +62,13 @@ public:
 	/// the ecosystem, because flash writes stall execution anyway.
 	bool Uploading() const { return uploading_; }
 
-	/// Set by core 1 immediately before it erases or programs flash, cleared
-	/// after. While it is true, core 0 must not execute ANY flash-resident code
-	/// or fetch from XIP — it parks in a RAM-resident spin instead.
+	/// True once an upload has begun. The audio interrupt is disabled for the
+	/// whole upload and the card reboots when it ends, so this is a one-way
+	/// latch: the card is an upload appliance until it restarts.
 	///
-	/// This became a real hazard, not a theoretical one, when USB moved to core
-	/// 1: previously the flash write happened on the same core that was running
-	/// the audio callback, so nothing else could run. Now core 0 keeps going.
-	static volatile bool flashBusy;
+	/// This replaces a `flashBusy` flag that core 0 spun on from inside its DMA
+	/// interrupt handler. That deadlocked every time — see EnterUploadMode().
+	static volatile bool uploadMode;
 
 	/// 0..kQ16One, for the LED progress display.
 	int32_t Progress() const;

@@ -388,6 +388,114 @@ mean that knob position was never swept.
 
 ---
 
+## Drone was the real glitch, and the uploader never worked at all
+
+The measured sweep above was **Rhythm mode only**, and that turned out to matter.
+
+### The ear found what the sweep missed
+
+Asked whether the overruns were actually audible, the answer was that they were
+mostly masked — chirps and hooves are broadband and transient-dense, so a
+one-sample discontinuity hides in material that already sounds like noise. Fair,
+and it nearly stopped the work.
+
+But then: discontinuity **in Drone**, on Geese, Frogs and Meteors, with a guess
+that it was "the longer samples". Meteors measures 2139 cycles — the one mode
+never over on Engine — so Engine could not be the cause. Reading timing in Drone:
+
+| bucket | Rhythm (Geese) | Drone (Geese) |
+|--------|---------------:|--------------:|
+| Engine | 3118 | 3145 |
+| **Voices** | **800** | **17546** |
+| Total | 3900 | 18230 |
+| overruns | 249 | **373862** |
+
+**674% of budget, and 1500x the overruns.** The engines were never the problem in
+Drone. `droneRender()` is, and unlike the physics it runs on *every* sample.
+
+The cause was one line: a triangular grain window computing `(dist << 16) / half`
+per grain per sample — 8 grains x 4 voices = **32 hardware divides at 48kHz** on a
+core with no divider. `g.len` never changes once a grain launches, so the whole
+thing was recomputing a constant 48000 times a second. The reciprocal is now
+taken once at launch and the render loop multiplies.
+
+The "longer samples" hunch was right, and better than my reasoning: longer grains
+stay active longer, so more of the 32 divides are live at once.
+
+### Getting the reciprocal right took three attempts
+
+Worth recording, because the first two would have shipped audible bugs and a
+Python check caught both before flashing:
+
+1. **Q16 reciprocal** — `(0xFFFFFFFF/half)>>16`. Fine for short grains; on
+   `meteors_5` (118596 bytes) it truncates to 1 against a true 1.105, a **10%
+   window error**, and an uploaded 1MB sample truncates it to **0** — silence.
+2. **Q48 reciprocal** — fixes the long grains, **overflows 32 bits** on short ones.
+3. **Q32 with a clamped `dist`** — the range of `half` (8 to ~500000) is too wide
+   for any single fixed scale. The survivor also needs `dist < half`, because an
+   odd `len` lets `dist == half`, and `half * (2^32/half)` is exactly 2^32, which
+   wraps to zero and turns the window's **peak** into silence.
+
+Verified exhaustively against the original across every real sample length:
+zero overflows, max error 0.19% of full scale on the shortest baked recording.
+
+### The uploader deadlocked the card, every time
+
+Reported as: web UI says it will go silent, then no sound, no LEDs, no control,
+until a power cycle. Three separate defects, all in a path that had **never once
+run on hardware**:
+
+1. **The park loop was inside the DMA interrupt handler.** Core 0 spun in
+   `ProcessSample()` waiting for core 1 to finish writing flash. Spinning for the
+   seconds an erase takes starves the audio DMA, and it never restarts.
+2. **`ProcessSample()` is `virtual`.** Merely *dispatching* to it reads a vtable
+   that lives in flash — so with XIP down, core 0 faults before reaching any
+   guard. The RAM-residency of the function body cannot help you get to it.
+3. **Every upload erased the whole 1MB region** and `memset` the slot table, so
+   replacing one 6KB recording destroyed the entire library, after a multi-second
+   stall the browser read as a hang.
+
+Fixed by giving up on the pretence. `EnterUploadMode()` disables `DMA_IRQ_0`
+outright, the whole USB path is now RAM-resident, core 1 drives the progress
+LEDs (core 0 is not running at all), and the card **reboots** when the upload
+finishes. The web UI already said "the card mutes while uploading"; this makes
+that true instead of aspirational.
+
+Uploads are now incremental: the header is seeded from what is already on the
+card and new audio is appended, so untouched slots survive. The append point is
+rounded **up** to a sector boundary — erase works a sector at a time, and
+starting mid-sector would have wiped the tail of the previous recording, which is
+the exact corruption the change existed to prevent. Space is reclaimed with
+"revert to built-in", which empties the region.
+
+### Drips: the first 40% of the knob did nothing
+
+Reported as basically never firing until ~40%, then firing often. Measured, and
+exactly right: **0.00 triggers/sec everywhere below 45%**, then straight to 3.3.
+
+This was not a knob-taper problem, so remapping the curve would only have moved
+the cliff. Below a certain inflow the buckets leak as fast as they fill, so the
+level sits at an equilibrium under the threshold and *nothing ever fires* — a
+uniform random drop cannot cross it, no matter how the knob is scaled.
+
+Two changes. The inflow law is square-rooted (`fast_sqrt_q16`, a new bitwise
+integer sqrt — no libm, no float, no divide) so the bottom of the travel moves
+fastest, with a small floor. And the drop is now **heavy-tailed**: cubing the
+random keeps the mean low but lengthens the tail, so a weak downpour still tips a
+bucket occasionally. That tail is what removes the dead zone, and it is closer to
+real dripping, where water gathers and then lets go.
+
+Result: drips from 2% of travel, rising smoothly to ~19/sec, under the ~25/sec
+ceiling at which a rhythm stops reading as one.
+
+The obvious `* 4 / 5` gain trim compiled to an `__aeabi_idiv` call **inside the
+inner loop**, checked in the disassembly and replaced with a Q16 multiply. The
+same M0+-has-no-divider lesson the Cicadas patch walk already learned.
+
+**Status: all three built and staged, none heard on hardware yet.**
+
+---
+
 ## Standing notes
 
 - **`tools/simulate.py` duplicates the C++ constants.** It will drift if
@@ -401,14 +509,20 @@ mean that knob position was never swept.
 - **The card currently drops samples in all six modes.** Cicadas is worst at 3×
   budget, Horses overruns most often at 11030 per read. This is a known, measured
   defect, not a suspicion.
-- **Drone mode has never been heard.** Its grain rates and stretch factors are
-  calculated, not auditioned. Same for the audio-reactive thresholds, which are
+- **Drone mode has now been heard, and it was the worst thing on the card** —
+  17546 cycles in `droneRender()`, 674% of budget. Fixed (see above), but the fix
+  is not yet auditioned, and the grain rates and stretch factors are still
+  calculated rather than tuned by ear. The audio-reactive thresholds remain
   untested against real signal levels.
-- **The USB path now partly runs on hardware.** Enumeration, SysEx round-trip and
-  the browser's `MSG_PROF_GET` query are proven — that is how the timing above was
-  read. **Sample upload and flash writing are still unproven**: no upload has been
-  performed, so `WebUI::flashBusy` and core 0's RAM-resident park during
-  `flash_range_erase` have never actually been exercised.
+- **Measure the mode you are asking about.** The six-mode sweep was Rhythm-only
+  and said nothing about Drone, where the real defect was — and the tell came
+  from someone listening, not from the numbers.
+- **The USB path partly runs on hardware.** Enumeration, SysEx round-trip and the
+  browser's `MSG_PROF_GET` query are proven — that is how the timing above was
+  read. **Sample upload is still unproven.** It has been *attempted*, which is how
+  the deadlock was found; the rewritten version (stop audio, append, reboot) has
+  been built but never run. Treat a successful upload as unverified until one
+  completes and the card comes back with the new samples.
 - **Listening beats simulation, and simulation beats reading the code.** Every
   fix in this log after the first release came from someone playing the card, and
   more than one of my confident first guesses was wrong until I measured

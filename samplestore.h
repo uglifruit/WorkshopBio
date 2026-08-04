@@ -44,6 +44,9 @@ constexpr uint32_t kUserMagic   = 0x42494F31u;   // "BIO1"
 constexpr uint32_t kUserVersion = 1;
 
 // The header occupies the first flash sector of the region; audio follows.
+// RP2040 flash erases a sector at a time; every erase must be sector-aligned.
+constexpr uint32_t kFlashSector   = 4096;
+
 constexpr uint32_t kUserHeaderLen = 4096;
 constexpr uint32_t kUserDataOff   = kUserRegionOff + kUserHeaderLen;
 constexpr uint32_t kUserDataLen   = kUserRegionLen - kUserHeaderLen;

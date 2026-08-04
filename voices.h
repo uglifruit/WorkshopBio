@@ -74,6 +74,12 @@ struct Grain
 	uint32_t pos;      // Q16 position within the sample
 	uint32_t inc;      // Q16 playback rate
 	int32_t  level;    // Q16 gain for this grain
+	// Reciprocal of the window half-length, Q16. The triangular window needs
+	// dist/half every sample, and len never changes once the grain launches --
+	// so the divide is hoisted to launch and the render loop multiplies. The
+	// M0+ has no divider, so this was a libgcc call per grain per sample:
+	// 32 of them at 48kHz, which measured 17546 cycles against a 2604 budget.
+	uint32_t invHalf;
 	bool     active;
 };
 

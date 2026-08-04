@@ -7,10 +7,13 @@
 #include "pico/multicore.h"
 #include "hardware/flash.h"
 #include "hardware/sync.h"
+#include "hardware/irq.h"
+#include "hardware/watchdog.h"
+#include "hardware/dma.h"
 
 namespace bio {
 
-volatile bool WebUI::flashBusy = false;
+volatile bool WebUI::uploadMode = false;
 
 // ---------------------------------------------------------------------------
 // 7-bit encoding
@@ -61,25 +64,36 @@ uint32_t Decode7bit(const uint8_t *src, uint32_t srcLen, uint8_t *dst,
 // BioMimicry code, but interrupts are disabled anyway because a flash-resident
 // ISR firing mid-erase would hard-fault.
 
+/// Stop the audio engine for the duration of an upload.
+///
+/// Writing flash means XIP goes down, and core 0 cannot survive that: its DMA
+/// interrupt handler dispatches through a vtable in flash, so it faults before
+/// any software guard could run. The previous attempt tried to park core 0 in a
+/// RAM-resident spin and deadlocked the card every time.
+///
+/// So the card stops pretending to be a synth: the audio interrupt is switched
+/// off, the outputs are zeroed, and the card reboots when the upload finishes.
+/// The web UI already warns that the card goes silent -- this makes that true
+/// rather than aspirational.
+static void EnterUploadMode()
+{
+	if (WebUI::uploadMode) return;
+	WebUI::uploadMode = true;
+	irq_set_enabled(DMA_IRQ_0, false);
+}
+
 static void __not_in_flash_func(EraseRegion)(uint32_t off, uint32_t len)
 {
-	WebUI::flashBusy = true;
-	__sev();                                  // wake core 0 into its park loop
-	busy_wait_us(50);                         // let it get there
 	uint32_t ints = save_and_disable_interrupts();
 	flash_range_erase(off, len);
 	restore_interrupts(ints);
-	WebUI::flashBusy = false;
 }
 
 static void __not_in_flash_func(ProgramPage)(uint32_t off, const uint8_t *data)
 {
-	WebUI::flashBusy = true;
-	busy_wait_us(20);
 	uint32_t ints = save_and_disable_interrupts();
 	flash_range_program(off, data, 256);
 	restore_interrupts(ints);
-	WebUI::flashBusy = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -90,14 +104,14 @@ void WebUI::Init()
 	memset(&hdr_, 0, sizeof(hdr_));
 }
 
-int32_t WebUI::Progress() const
+int32_t __not_in_flash_func(WebUI::Progress)() const
 {
 	if (!uploading_ || expected_ == 0) return 0;
 	uint64_t p = static_cast<uint64_t>(writeOff_) * kQ16One / expected_;
 	return (p > kQ16One) ? kQ16One : static_cast<int32_t>(p);
 }
 
-void WebUI::Task()
+void __not_in_flash_func(WebUI::Task)()
 {
 	tud_task();
 
@@ -135,7 +149,7 @@ void WebUI::Task()
 	}
 }
 
-void WebUI::Send(const uint8_t *payload, uint32_t len)
+void __not_in_flash_func(WebUI::Send)(const uint8_t *payload, uint32_t len)
 {
 	uint8_t buf[64];
 	if (len + 3 > sizeof(buf)) return;
@@ -148,7 +162,7 @@ void WebUI::Send(const uint8_t *payload, uint32_t len)
 	tud_midi_stream_write(0, buf, o);
 }
 
-void WebUI::SendAck(uint8_t code, uint32_t value)
+void __not_in_flash_func(WebUI::SendAck)(uint8_t code, uint32_t value)
 {
 	uint8_t p[6] = { MSG_UP_ACK, code,
 	                 static_cast<uint8_t>((value >> 14) & 0x7F),
@@ -157,14 +171,14 @@ void WebUI::SendAck(uint8_t code, uint32_t value)
 	Send(p, 5);
 }
 
-void WebUI::SendErr(uint8_t code)
+void __not_in_flash_func(WebUI::SendErr)(uint8_t code)
 {
 	uint8_t p[2] = { MSG_UP_ERR, code };
 	Send(p, 2);
 	uploading_ = false;
 }
 
-void WebUI::FlushPage()
+void __not_in_flash_func(WebUI::FlushPage)()
 {
 	if (pageFill_ == 0) return;
 	// Pad the tail so a partial page still programs cleanly.
@@ -174,7 +188,7 @@ void WebUI::FlushPage()
 	pageFill_ = 0;
 }
 
-void WebUI::CommitHeader()
+void __not_in_flash_func(WebUI::CommitHeader)()
 {
 	FlushPage();
 	hdr_.magic = kUserMagic;
@@ -192,7 +206,7 @@ void WebUI::CommitHeader()
 		ProgramPage(kUserRegionOff + i, sector + i);
 }
 
-void WebUI::HandleSysex(const uint8_t *msg, uint32_t len)
+void __not_in_flash_func(WebUI::HandleSysex)(const uint8_t *msg, uint32_t len)
 {
 	if (len < 2 || msg[0] != kManufacturerId) return;
 	const uint8_t *p = msg + 1;
@@ -225,15 +239,45 @@ void WebUI::HandleSysex(const uint8_t *msg, uint32_t len)
 		          |  static_cast<uint32_t>(p[3]);
 		if (expected_ > kUserDataLen) { SendErr(ERR_TOO_BIG); break; }
 
-		uploading_ = true;
-		writeOff_ = 0;
-		pageFill_ = 0;
-		pageAddr_ = kUserDataOff;
-		memset(&hdr_, 0, sizeof(hdr_));
+		// Audio stops here, for the whole upload, and the card reboots at the
+		// end. Nothing below this line can run concurrently with the engine.
+		EnterUploadMode();
 
-		// Erase the whole data area up front: one long stall while muted,
-		// rather than a stutter per sector during the transfer.
-		EraseRegion(kUserDataOff, kUserDataLen);
+		uploading_ = true;
+		pageFill_ = 0;
+
+		// Start from what is already on the card rather than a blank table, so
+		// uploading one slot leaves the other 47 alone. Previously every upload
+		// memset the header and erased all 1MB, which meant replacing a single
+		// 6KB recording destroyed the whole library -- and the erase itself was
+		// a multi-second stall the browser read as a hang.
+		const UserSampleHeader *cur = UserHeader();
+		if (cur->magic == kUserMagic && cur->version == kUserVersion)
+		{
+			memcpy(&hdr_, cur, sizeof(hdr_));
+			writeOff_ = cur->totalBytes;
+		}
+		else
+		{
+			memset(&hdr_, 0, sizeof(hdr_));
+			writeOff_ = 0;
+		}
+
+		// New audio is appended after whatever is already stored, and the append
+		// point is rounded UP to a sector boundary. Erase works a whole sector at
+		// a time, so starting mid-sector would erase the tail of the recording
+		// already sitting there -- silently corrupting a slot this upload never
+		// touched, which is the exact failure this change exists to prevent.
+		writeOff_ = (writeOff_ + kFlashSector - 1u) & ~(kFlashSector - 1u);
+		if (writeOff_ + expected_ > kUserDataLen) { SendErr(ERR_TOO_BIG); break; }
+		pageAddr_ = kUserDataOff + writeOff_;
+
+		{
+			// kUserDataOff is sector-aligned, so this start is too.
+			uint32_t end = (pageAddr_ + expected_ + kFlashSector - 1u)
+			               & ~(kFlashSector - 1u);
+			if (end > pageAddr_) EraseRegion(pageAddr_, end - pageAddr_);
+		}
 		SendAck(0, 0);
 		break;
 	}
@@ -290,6 +334,13 @@ void WebUI::HandleSysex(const uint8_t *msg, uint32_t len)
 		CommitHeader();
 		uploading_ = false;
 		SendAck(4, writeOff_);
+
+		// Reboot rather than trying to resume. The audio interrupt is off, the
+		// sample pointers the engine cached are stale, and a restart resolves
+		// the new slots cleanly at boot. Give USB a moment to push the ack out
+		// first, or the browser sees the disconnect before the confirmation.
+		busy_wait_ms(120);
+		watchdog_reboot(0, 0, 0);
 		break;
 
 #ifdef BIO_PROFILE
@@ -323,11 +374,17 @@ void WebUI::HandleSysex(const uint8_t *msg, uint32_t len)
 
 	case MSG_ERASE:
 		// Wipe just the header sector: the audio stays but is unreferenced, so
-		// the card falls straight back to its baked samples.
-		uploading_ = true;      // mute for the erase
-		EraseRegion(kUserRegionOff, 4096);
-		uploading_ = false;
+		// the card falls straight back to its baked samples. This is also how
+		// space is reclaimed -- uploads append, so re-uploading the same slot
+		// repeatedly eventually fills the region, and this resets it to empty.
+		//
+		// Stops audio and reboots exactly like an upload: this erases flash, so
+		// it cannot run while the engine is live.
+		EnterUploadMode();
+		EraseRegion(kUserRegionOff, kFlashSector);
 		SendAck(5, 0);
+		busy_wait_ms(120);
+		watchdog_reboot(0, 0, 0);
 		break;
 
 	default:

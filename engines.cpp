@@ -536,6 +536,15 @@ static const int8_t kRainLeakBias[kNumAgents] = { 0, -1, 1, 0 };
 // keeps them staggered while still passing energy along.
 static constexpr int32_t kRainSplash = kQ16One / 12;
 
+// Smallest downpour a barely-open knob still admits, Q16. Deliberately tiny: at
+// knob zero the mode is silent (no rain is the right answer for no knob), and
+// this only stops the first few percent of travel from being a dead band.
+static constexpr int32_t kRainFloor = 2500;
+
+// Overall inflow gain, Q16 (0.8). Trims the top of the sweep to ~21 drips/sec
+// per bucket, under the ~25/sec at which a rhythm stops reading as one.
+static constexpr int32_t kRainGain = (kQ16One * 4) / 5;
+
 void RainEngine::reset(uint32_t seed)
 {
 	rng_ = seed | 1u;
@@ -552,12 +561,18 @@ void __not_in_flash_func(RainEngine::tick)(const Ctrl &c, EngineOut &out)
 		for (int i = 0; i < kNumAgents; i++)
 			level_[i] += (kQ16One >> 1) + (rand_q16(rng_) >> 1);
 
-	// Downpour: how hard it's raining into the buckets. A modest offset lifts the
-	// bottom of the knob just over the leak, then the response stays linear-ish
-	// to the top so the last quarter of travel still adds intensity instead of
-	// flattening out.
+	// Downpour: how hard it's raining into the buckets.
+	//
+	// This used to be quadratic-ish, which left the first 40% of the knob
+	// completely silent: below a certain inflow the buckets leak as fast as they
+	// fill, so nothing ever reaches threshold, and then the mode snapped straight
+	// to ~3 drips/sec the moment it crossed. Half the travel did nothing and the
+	// onset was a step rather than a fade.
+	//
+	// Square-rooted instead, so the bottom of the knob moves fastest, with a
+	// small floor so a barely-open knob still admits some water.
 	int32_t x = c.physics;
-	int32_t downpour = (x >> 2) + ((x + mul_q16(x, x)) >> 2);
+	int32_t downpour = kRainFloor + mul_q16(kQ16One - kRainFloor, fast_sqrt_q16(x));
 	if (downpour > kQ16One) downpour = kQ16One;
 
 	// Pulse In 2 entrains the rain: each clock pulse tops every bucket up a
@@ -581,9 +596,21 @@ void __not_in_flash_func(RainEngine::tick)(const Ctrl &c, EngineOut &out)
 	{
 		if (i >= c.population) { out.state[i] = 0; continue; }
 
-		// Noisy inflow. The >>5 sets the ceiling: full downpour lands around 25
-		// drips/sec per bucket, a dense torrent that is still a rhythm.
-		int32_t drop = mul_q16(rand_q16(rng_), downpour) >> 5;
+		// Noisy inflow, heavy-tailed: cubing the random makes most drops tiny and
+		// a few of them large. That tail is what lets a weak downpour still tip a
+		// bucket occasionally instead of settling at an equilibrium below the
+		// threshold and firing literally never — a uniform drop cannot do it,
+		// which is what made the bottom of the knob silent. It is also closer to
+		// real dripping, where water gathers for a while and then lets go.
+		//
+		// kRainGain (0.8) and the >>4 set the ceiling: full downpour lands around
+		// 21 drips/sec per bucket, a dense torrent that is still a rhythm rather
+		// than a wash. Written as a Q16 multiply, not `* 4 / 5` -- the M0+ has no
+		// divider and the literal division compiled to an __aeabi_idiv call in
+		// the inner loop, four times per control tick.
+		int32_t r = rand_q16(rng_);
+		int32_t drop = mul_q16(mul_q16(mul_q16(mul_q16(r, r), r), downpour),
+		                       kRainGain) >> 4;
 		if (drop < 0) drop = 0;
 
 		level_[i] += drop;
