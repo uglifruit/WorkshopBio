@@ -263,8 +263,12 @@ public:
 		// Core 1's clock. Everything it does is paced off this rather than
 		// free-running, so the 1.5kHz control rate stays anchored to audio time.
 		// Published now, unused until the physics move across.
+		//
+		// This is the ONLY thing published at 48kHz. switchMirror started here
+		// too and cost real cycles for nothing: core 1 reads it at the control
+		// rate, so publishing it 32x more often than it can be consumed is pure
+		// waste in the hottest loop on the card. It lives in controlTick now.
 		gXC.sampleCount++;
-		gXC.switchMirror = static_cast<uint8_t>(SwitchVal());
 
 		// ---- Audio (48kHz) ----------------------------------------------
 		int16_t l, r;
@@ -372,6 +376,11 @@ private:
 		// the hold would also cycle the ecosystem out from under you. Releasing
 		// before the hold completes is a tap; holding past it is consumed.
 		Switch sw = SwitchVal();
+		// Republished for core 1, which must never call SwitchVal() itself:
+		// ComputerCard returns a member that is not declared volatile, so core 1
+		// would cache it forever and the switch would appear to stop working.
+		gXC.switchMirror = static_cast<uint8_t>(sw);
+
 		if (sw == Switch::Down)
 		{
 			// Do not start counting until the boot splash has finished AND the
@@ -624,8 +633,6 @@ private:
 			if ((d << 4) > kQ16One / 3) { startle_ = true; gXC.startleSeq++; }
 		}
 		else lastAudio2_ = 0;
-
-		gXC.loudness = loudness_;
 	}
 
 	// -------------------------------------------------------------------

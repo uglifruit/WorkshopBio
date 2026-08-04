@@ -384,6 +384,7 @@ void __not_in_flash_func(WebUI::HandleSysex)(const uint8_t *msg, uint32_t len)
 			baseOff_ = 0;
 		}
 		memset(touched_, 0, sizeof(touched_));
+		memset(modeCleared_, 0, sizeof(modeCleared_));
 
 		WebUI::stage = 4;
 
@@ -416,6 +417,24 @@ void __not_in_flash_func(WebUI::HandleSysex)(const uint8_t *msg, uint32_t len)
 			SendErr(ERR_BAD_SLOT);
 			break;
 		}
+		// The FIRST slot sent for a mode clears every other slot of that mode.
+		//
+		// Replacing a mode means replacing it: uploading two geese over a
+		// previous set of eight must leave two, not two plus six survivors. The
+		// firmware then rounds the round robin down to what is present, so the
+		// card plays exactly what was sent. Without this, the stale sizes from
+		// the earlier upload would keep the old recordings in the rotation.
+		if (!modeCleared_[slotMode_])
+		{
+			modeCleared_[slotMode_] = true;
+			for (int v = 0; v < kNumVariants; v++)
+			{
+				hdr_.offset[slotMode_][v] = 0;
+				hdr_.size[slotMode_][v]   = 0;
+				touched_[slotMode_][v]    = false;
+			}
+		}
+
 		// Slots are staged in RAM, each starting page-aligned so it can still be
 		// programmed independently when the whole lot is committed at UP_END.
 		bufLen_ = (bufLen_ + 255u) & ~255u;

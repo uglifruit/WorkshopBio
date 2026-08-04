@@ -158,10 +158,17 @@ void __not_in_flash_func(VoiceBank::selectVariantAndPan)(Voice &v, int agent, Mo
 	{
 		// Round robin with no immediate repeat, so you never hear the same
 		// honk or drip twice running.
+		//
+		// Bounded by what this mode actually HAS, not by the eight slots it could
+		// have. Uploading two geese used to leave the other six baked recordings
+		// in the rotation, so you heard your two mixed with six of the card's —
+		// never what replacing a mode is meant to do.
+		int n = VariantCount(mi);
+		if (n < 1) n = 1;
 		uint8_t pick;
 		do {
-			pick = static_cast<uint8_t>(xorshift32(rng_) & (kNumVariants - 1));
-		} while (pick == lastVariant_[agent] && kNumVariants > 1);
+			pick = static_cast<uint8_t>(xorshift32(rng_) % static_cast<uint32_t>(n));
+		} while (pick == lastVariant_[agent] && n > 1);
 		v.variant = pick;
 		lastVariant_[agent] = pick;
 	}
@@ -383,7 +390,12 @@ void __not_in_flash_func(VoiceBank::droneUpdate)(Mode m, const int32_t *state, i
 
 			// Pick any variant — in Drone the recordings are raw material, so
 			// the hoof/individual distinction does not apply.
-			uint8_t var = static_cast<uint8_t>(xorshift32(d.rng) & (kNumVariants - 1));
+			// Same bound as the Rhythm round robin: granulate only what this mode
+			// actually has, so two uploaded geese do not get mixed with six baked.
+			int nvar = VariantCount(mi);
+			if (nvar < 1) nvar = 1;
+			uint8_t var = static_cast<uint8_t>(
+				xorshift32(d.rng) % static_cast<uint32_t>(nvar));
 			SampleRef sr = ResolveSample(mi, var);
 			g.pcm = sr.data;
 			g.len = sr.len;

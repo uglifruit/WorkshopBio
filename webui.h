@@ -72,10 +72,10 @@ public:
 	/// the card over to USB. Core 1 watches it, initialises TinyUSB the first
 	/// time it goes true, and then services USB forever.
 	///
-	/// One-way. Sample management is a setup activity, so entering it costs a
-	/// power cycle to leave — which is also why USB is not running at all until
-	/// this is set: no enumeration, no flash-resident USBCTRL_IRQ, and no USB
-	/// stack competing with the audio path while the card is being played.
+	/// Leaving reboots the card — hold the switch again, or press "Back to
+	/// playing" in the web UI. USB is not running at all until this is set: no
+	/// enumeration, no flash-resident USBCTRL_IRQ, and no USB stack competing
+	/// with the audio path while the card is being played.
 	static volatile bool usbMode;
 
 	/// True once an upload has begun. The audio interrupt is disabled for the
@@ -135,6 +135,10 @@ private:
 	uint32_t slotStart_ = 0;    // where the current slot began in buf_
 	uint32_t slotLen_ = 0;
 	bool     touched_[kNumModes][kNumVariants] = {};
+	// Which modes this session has already wiped. The first slot sent for a mode
+	// clears the rest of it, so uploading two geese leaves two rather than two
+	// plus six survivors from an earlier upload.
+	bool     modeCleared_[kNumModes] = {};
 
 	// The header being built up as slots arrive; written last so a half-finished
 	// upload never leaves a valid-looking directory behind.

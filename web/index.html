@@ -463,6 +463,19 @@ async function revert() {
     // is reclaimed too: uploads append, so this is the way to empty the region.
     send([MSG.ERASE]);
     await waitAck(8000).catch(() => null);
+
+    // Clear the staged slots too. The card is back to all eight built-in
+    // variants per mode, so leaving the page showing loaded files and a
+    // "will play only these two" note would be describing a card that no
+    // longer exists.
+    state.slots = {};
+    for (const el of document.querySelectorAll(".slot")) {
+      el.classList.remove("filled");
+      const len = el.querySelector(".len");
+      if (len) len.textContent = "empty";
+    }
+    updateUsage();
+
     setStatus("Reverted to the built-in samples — the card is restarting.", "ok");
     document.getElementById("revert").disabled = true;
     document.getElementById("connect").disabled = false;
@@ -502,7 +515,48 @@ function build() {
       slots.appendChild(s);
     }
     div.appendChild(slots);
+
+    // What this mode will ACTUALLY play after uploading. Loading two geese does
+    // not give you two geese plus six of the card's own: the firmware restricts
+    // a mode to the slots you filled. Worth stating, because the alternative
+    // assumption is reasonable and produces a confusing result.
+    const note = document.createElement("p");
+    note.className = "hint";
+    note.id = `use${mi}`;
+    div.appendChild(note);
+
     wrap.appendChild(div);
+  });
+  updateUsage();
+}
+
+/// Refresh every mode's "will play" line. Called on load and after each drop.
+function updateUsage() {
+  MODES.forEach(([name, , count], mi) => {
+    const el = document.getElementById(`use${mi}`);
+    if (!el) return;
+
+    // Count the leading run, because that is what the firmware uses: the round
+    // robin picks an index below the count, so a gap would let it land on a slot
+    // that was never filled.
+    let run = 0;
+    while (run < count && state.slots[`${mi}:${run}`]) run++;
+    const total = Object.keys(state.slots)
+                        .filter(k => k.startsWith(`${mi}:`)).length;
+
+    if (total === 0) {
+      el.textContent = `Using all ${count} built-in variants.`;
+      el.style.color = "";
+    } else if (run < total) {
+      // Filled out of order: the slots after the gap would be ignored.
+      el.textContent = `⚠ Fill from slot 1 with no gaps — ${run || "none"} ` +
+                       `would be used, the rest ignored.`;
+      el.style.color = "var(--err)";
+    } else {
+      el.textContent = `✓ Will play only these ${run} — the built-in ` +
+                       `${name.toLowerCase()} are not mixed in.`;
+      el.style.color = "var(--accent)";
+    }
   });
 }
 
@@ -513,6 +567,7 @@ async function load(mode, variant, file, el) {
     state.slots[`${mode}:${variant}`] = { mode, variant, audio: d, name: file.name };
     el.classList.add("filled");
     el.querySelector(".len").textContent = `${(d.length / 48) | 0} ms`;
+    updateUsage();
   } catch (e) {
     el.querySelector(".len").textContent = "unreadable";
   }

@@ -95,6 +95,28 @@ static inline SampleRef ResolveSample(int mode, int variant)
 	return { nullptr, 0 };
 }
 
+/// How many round-robin variants a mode should actually use.
+///
+/// If ANY slot of a mode has been uploaded, only the uploaded ones count. Upload
+/// two geese and you get two geese — not your two mixed with six of the card's
+/// own, which is what a blind round robin over all eight slots would give you and
+/// is never what someone replacing a mode wants.
+///
+/// Counts the leading run rather than the total, because the round robin picks an
+/// index below the returned value: a gap would otherwise let it land on a slot
+/// that was never filled. The web UI fills slot 1 upwards for this reason.
+static inline int VariantCount(int mode)
+{
+	if (HaveUserSamples())
+	{
+		const UserSampleHeader *h = UserHeader();
+		int n = 0;
+		while (n < kNumVariants && h->size[mode][n] > 0) n++;
+		if (n > 0) return n;
+	}
+	return kHaveSamples ? kNumVariants : 0;
+}
+
 /// True if there is anything at all to play — either source.
 static inline bool AnySamples()
 {
