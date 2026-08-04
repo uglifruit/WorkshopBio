@@ -13,13 +13,18 @@ accumulator of a waterfall walk, and the sudden silent clustering of a meteor sh
 Runs on a Music Thing Modular Workshop System Computer. Built on the RP2040 with
 [ComputerCard](https://github.com/TomWhitwell/Workshop_Computer).
 
-> **v1.0.0** — six ecosystems, two boot modes, a full library of real animal
+> **v1.0.1** — six ecosystems, two boot modes, a full library of real animal
 > recordings, and a browser app for swapping them over USB. Rhythm mode has been
 > played on hardware and iterated on across several rounds of listening. The USB
-> uploader now works on hardware too: transfers complete and survive a reboot.
-> Drone mode has been heard and profiled, and still runs slightly over its
-> per-sample budget on dense material; the audio-reactive inputs remain untested
-> against real signal levels.
+> uploader now works on hardware: transfers complete, samples survive the reboot,
+> and replacing one slot leaves the rest alone.
+>
+> This release is corrective — it fixes an audible glitch in Drone, a dead first
+> 40% of the Drips knob, a too-busy bottom end on Meteors, and an uploader that
+> hung the card. Drone has now been heard and profiled and still runs slightly
+> over its per-sample budget on dense material; the audio-reactive inputs remain
+> untested against real signal levels. Both are on the list for **v1.1.0**, which
+> will decouple what the two cores do.
 >
 > Why the card is the way it is — including the things that were wrong first — is
 > in [docs/DEVLOG.md](docs/DEVLOG.md).

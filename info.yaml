@@ -3,7 +3,7 @@ Name: BioMimicry
 short-description: Six physics engines generating organic, semi-random triggers, CV and audio
 Language: C++ (ComputerCard)
 Creator: Andy Jenkinson (uglifruit)
-Version: "1.0.0"
+Version: "1.0.1"
 Status: Released
 License: CC-BY-4.0
 repository: https://github.com/uglifruit/WorkshopBio
@@ -19,7 +19,7 @@ contact:
 # The build computes the sha256 for repo-hosted firmware, so none is given here.
 uf2:
   - path: UF2/biomimicry.uf2
-    name: BioMimicry 1.0.0
+    name: BioMimicry 1.0.1
 
 tags:
   - generative

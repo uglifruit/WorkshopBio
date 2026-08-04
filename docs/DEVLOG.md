@@ -664,6 +664,51 @@ When a fix fails twice, the third attempt should probably be a measurement.
 
 ---
 
+## v1.0.1, and what v1.1.0 is for
+
+**v1.0.1 is corrective.** Everything in it fixes something that was wrong in
+1.0.0 and was found by playing the card, not by reading it:
+
+- Drone's audible glitch — `droneRender()` **17546 -> 3398** cycles, overruns
+  down 99.2%, by removing a per-sample divide and two `__aeabi_lmul` calls.
+- Drips' dead first 40% of travel — the buckets leaked as fast as they filled, so
+  no knob taper could have fixed it; the inflow needed a heavy tail.
+- Meteors' too-busy CCW end — **0.53/s -> 0.06/s**, an empty sky you wait on.
+- An uploader that hung the card, now working, incremental, and RAM-staged.
+
+### v1.1.0: decouple what the two cores do
+
+The remaining problems are all the same problem. Core 0 does **everything**
+audio — physics, voices, outputs, LEDs — inside one 20.83 µs interrupt, while
+core 1 does nothing but poll USB. In Drone that leaves core 0 carrying ~7000
+cycles against a 2604 budget while core 1 idles.
+
+The plan, in the order the constraints force:
+
+1. **USB becomes modal.** Hold the momentary switch to enter an explicit upload
+   mode; normal operation never calls TinyUSB at all. This is the user's
+   suggestion and it is the right one: sample management is a setup activity, so
+   the card should not carry the USB stack, its flash-resident ISR, or the
+   enumeration risk while performing.
+2. **That frees core 1**, which is the only reason step 3 is possible.
+3. **Split engine and voices across the cores** — the `second_core` pattern from
+   `../WorkshopZX`: one core free-runs the physics at control rate, the other
+   handles 48kHz I/O and rendering, communicating through a lock-free struct with
+   a single writer per field. Drone's Engine (4924) and Voices (3499) would stop
+   stacking in the same slot; the worst core carries ~4900 instead of ~7000.
+
+**What this does not fix:** Voices alone is 3499, still 134% of budget. Splitting
+stops the costs stacking; it does not make the granular renderer cheap. Getting
+Drone fully clean still means fewer grains or fewer voices, which thins the
+texture — an audible trade, and one to make by ear.
+
+**The known cost:** the profiler is read over USB, so in a modal design timing
+can only be read after playing, by entering upload mode. Peaks are already sticky
+until read, so this is survivable, but it is a real loss — every fix in this log
+came from reading those numbers.
+
+---
+
 ## Standing notes
 
 - **`tools/simulate.py` duplicates the C++ constants.** It will drift if
