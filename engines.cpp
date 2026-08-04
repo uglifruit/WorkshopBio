@@ -539,11 +539,16 @@ static constexpr int32_t kRainSplash = kQ16One / 12;
 // Smallest downpour a barely-open knob still admits, Q16. Deliberately tiny: at
 // knob zero the mode is silent (no rain is the right answer for no knob), and
 // this only stops the first few percent of travel from being a dead band.
-static constexpr int32_t kRainFloor = 2500;
+static constexpr int32_t kRainFloor = 9000;
 
-// Overall inflow gain, Q16 (0.8). Trims the top of the sweep to ~21 drips/sec
-// per bucket, under the ~25/sec at which a rhythm stops reading as one.
-static constexpr int32_t kRainGain = (kQ16One * 4) / 5;
+// Inflow gain, Q16, ramped across the sweep rather than fixed. A fixed 0.8 made
+// the first audible drips arrive faster than one a second, which is not what the
+// bottom of a rain knob should do -- you want to hear individual drips land and
+// count them. Ramping 0.4 -> 0.8 keeps the onset sparse (~1 drip every 2.5s when
+// they first appear) without capping the torrent at the top, which simply
+// lowering the gain would have done.
+static constexpr int32_t kRainGainMin = (kQ16One * 40) / 100;
+static constexpr int32_t kRainGainSpan = (kQ16One * 40) / 100;
 
 void RainEngine::reset(uint32_t seed)
 {
@@ -575,6 +580,9 @@ void __not_in_flash_func(RainEngine::tick)(const Ctrl &c, EngineOut &out)
 	int32_t downpour = kRainFloor + mul_q16(kQ16One - kRainFloor, fast_sqrt_q16(x));
 	if (downpour > kQ16One) downpour = kQ16One;
 
+	// Gain rises with the knob so the bottom stays sparse and the top stays full.
+	int32_t rainGain = kRainGainMin + mul_q16(kRainGainSpan, x);
+
 	// Pulse In 2 entrains the rain: each clock pulse tops every bucket up a
 	// little, so buckets nearest their threshold tip on the beat while the rest
 	// keep running free. The rhythm leans on the clock without being quantised
@@ -603,14 +611,14 @@ void __not_in_flash_func(RainEngine::tick)(const Ctrl &c, EngineOut &out)
 		// which is what made the bottom of the knob silent. It is also closer to
 		// real dripping, where water gathers for a while and then lets go.
 		//
-		// kRainGain (0.8) and the >>4 set the ceiling: full downpour lands around
-		// 21 drips/sec per bucket, a dense torrent that is still a rhythm rather
-		// than a wash. Written as a Q16 multiply, not `* 4 / 5` -- the M0+ has no
+		// rainGain and the >>4 set the ceiling: full downpour lands around 18
+		// drips/sec per bucket, a dense torrent that is still a rhythm rather than
+		// a wash. Written as Q16 multiplies, not `* 4 / 5` -- the M0+ has no
 		// divider and the literal division compiled to an __aeabi_idiv call in
 		// the inner loop, four times per control tick.
 		int32_t r = rand_q16(rng_);
 		int32_t drop = mul_q16(mul_q16(mul_q16(mul_q16(r, r), r), downpour),
-		                       kRainGain) >> 4;
+		                       rainGain) >> 4;
 		if (drop < 0) drop = 0;
 
 		level_[i] += drop;

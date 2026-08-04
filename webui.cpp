@@ -82,6 +82,17 @@ static void EnterUploadMode()
 	irq_set_enabled(DMA_IRQ_0, false);
 }
 
+/// Keep servicing USB for `ms` so queued replies actually reach the host.
+///
+/// tud_midi_stream_write only fills a buffer; tud_task() moves it onto the wire.
+/// Anything that replies and then immediately reboots must pump the stack in
+/// between, or the reply dies with the reboot.
+static void __not_in_flash_func(FlushUsb)(uint32_t ms)
+{
+	absolute_time_t until = make_timeout_time_ms(ms);
+	while (!time_reached(until)) tud_task();
+}
+
 static void __not_in_flash_func(EraseRegion)(uint32_t off, uint32_t len)
 {
 	uint32_t ints = save_and_disable_interrupts();
@@ -160,6 +171,23 @@ void __not_in_flash_func(WebUI::Send)(const uint8_t *payload, uint32_t len)
 	o += len;
 	buf[o++] = 0xF7;
 	tud_midi_stream_write(0, buf, o);
+
+	// tud_midi_stream_write only fills the FIFO; this TinyUSB has no MIDI flush,
+	// so tud_task() is the only thing that moves it onto the wire. During an
+	// upload the caller goes straight into an erase or a page program, which
+	// blocks with interrupts off, so a queued ack would sit there while the
+	// browser -- which waits for one before sending the next chunk -- timed out.
+	//
+	// Guarded against unbounded recursion: this runs inside tud_task(), and the
+	// nested call can itself deliver a SysEx that calls Send() again. One level
+	// is enough to get the bytes moving; deeper nesting is suppressed, and any
+	// RX that arrives meanwhile is picked up by the outer loop as usual.
+	if (!pumping_)
+	{
+		pumping_ = true;
+		tud_task();
+		pumping_ = false;
+	}
 }
 
 void __not_in_flash_func(WebUI::SendAck)(uint8_t code, uint32_t value)
@@ -335,11 +363,16 @@ void __not_in_flash_func(WebUI::HandleSysex)(const uint8_t *msg, uint32_t len)
 		uploading_ = false;
 		SendAck(4, writeOff_);
 
-		// Reboot rather than trying to resume. The audio interrupt is off, the
-		// sample pointers the engine cached are stale, and a restart resolves
-		// the new slots cleanly at boot. Give USB a moment to push the ack out
-		// first, or the browser sees the disconnect before the confirmation.
-		busy_wait_ms(120);
+		// Reboot rather than trying to resume: the audio interrupt is off, the
+		// sample pointers the engine cached are stale, and a restart resolves the
+		// new slots cleanly at boot.
+		//
+		// tud_midi_stream_write only QUEUES the ack -- tud_task() is what pushes
+		// it to the host, and we are called from inside tud_task() right now. A
+		// plain busy_wait here therefore rebooted with the ack still sitting in
+		// the buffer, which is exactly the "upload did nothing" symptom: the
+		// browser saw no reply and the card restarted underneath it.
+		FlushUsb(200);
 		watchdog_reboot(0, 0, 0);
 		break;
 
@@ -383,7 +416,7 @@ void __not_in_flash_func(WebUI::HandleSysex)(const uint8_t *msg, uint32_t len)
 		EnterUploadMode();
 		EraseRegion(kUserRegionOff, kFlashSector);
 		SendAck(5, 0);
-		busy_wait_ms(120);
+		FlushUsb(200);
 		watchdog_reboot(0, 0, 0);
 		break;
 

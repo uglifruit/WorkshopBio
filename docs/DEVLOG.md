@@ -496,6 +496,66 @@ same M0+-has-no-divider lesson the Cicadas patch walk already learned.
 
 ---
 
+## Round two on all three, from hardware
+
+### Drone: the divide was half of it
+
+`droneRender()` went **17546 -> 9608** cycles. Real, and not enough — still 369%
+of budget, and Geese still audibly glitched.
+
+The other half was in the same loop and the same shape: `mul_q16()` widens to
+`int64_t`, which on the M0+ is an **`__aeabi_lmul` library call**. Two of them per
+grain per sample, up to 32 grains, at 48kHz. Confirmed in the disassembly rather
+than guessed. Neither needed 64 bits: `|s| <= 2048` and `win <= 65536`, so the
+product peaks at 1.3e8 and the accumulator at 5.4e8, both comfortably inside
+int32. They are now plain 32-bit multiplies, and `droneRender()` contains **no
+library calls at all**.
+
+`droneUpdate()` had three more (`* 2 / 5`, `% 32`, `% kNumGrains`) — the first
+became a Q16 multiply, the other two masks, since both divisors are powers of
+two. It runs at control rate so it matters ~32x less, but it sits in the same
+Engine bucket that measured 4676 in Drone.
+
+The one remaining 64-bit divide is the window reciprocal at grain launch, which
+is the whole point: one divide per grain instead of one per grain per sample.
+
+### The uploader: the ack never left the device
+
+"Upload did nothing, revert reset to stock samples" — so the header never
+committed, and the browser saw nothing.
+
+`tud_midi_stream_write()` only fills a FIFO. **`tud_task()` is what puts bytes on
+the wire**, and this TinyUSB has no MIDI flush call. Every reply was queued and
+then immediately followed by an erase, a page program, or a `busy_wait` before
+the reboot — all of which block without servicing USB. So:
+
+- chunk acks sat in the buffer while the browser waited for one before sending
+  the next chunk, and
+- the final ack died with the `watchdog_reboot()` 120ms later.
+
+`Send()` now pumps `tud_task()` itself (guarded against unbounded recursion,
+since it is called from inside `tud_task()`), and the reboot paths spin on
+`FlushUsb()` instead of a blind `busy_wait`.
+
+Worth noting this bug was invisible to the profiler reads, which worked fine:
+those reply once and then return to the normal `Task()` loop, which flushes them
+on the next iteration. Only the upload path blocks immediately after replying.
+
+### Drips: right shape, wrong speed
+
+The dead zone was gone but the first drips arrived faster than one a second,
+where the ask was nearer one every four. Lowering the floor barely moved it and
+lowering the gain capped the torrent at the top.
+
+The fix was to stop treating gain as a constant: it now **ramps 0.4 -> 0.8 across
+the sweep**, so the bottom is sparse without flattening the top. With the floor
+raised to 9000, drips start at ~4% of travel at 0.41/s (one every 2.4s), pass 1/s
+around 10%, and reach ~18/s at full.
+
+**Status: built and staged; not yet heard.**
+
+---
+
 ## Standing notes
 
 - **`tools/simulate.py` duplicates the C++ constants.** It will drift if

@@ -363,17 +363,23 @@ void __not_in_flash_func(VoiceBank::droneUpdate)(Mode m, const int32_t *state, i
 			// Density shortens the interval by up to 40%. It was 75%, which
 			// asked for far more overlap than there are grain slots — the
 			// round-robin then stole grains mid-playback and chopped audibly.
+			// 0.4 as a Q16 multiply, not `* 2 / 5`: the M0+ has no divider and
+			// the literal compiled to an __aeabi_idiv call.
 			int32_t period = kGrainPeriod[mi];
-			period -= mul_q16(period * 2 / 5, d.density);
+			period -= mul_q16(mul_q16(period, kQ16One * 2 / 5), d.density);
 			if (period < 8) period = 8;
 			// A little randomness so grains never lock into a machine pulse.
-			d.countdown = period + (static_cast<int32_t>(xorshift32(d.rng) % 32));
+			// Masked, not `% 32` -- same reason.
+			d.countdown = period + (static_cast<int32_t>(xorshift32(d.rng) & 31u));
 		}
 
 		if (launch)
 		{
 			Grain &g = d.g[d.next];
-			d.next = static_cast<uint8_t>((d.next + 1) % kNumGrains);
+			// kNumGrains is a power of two, so mask rather than divide.
+			static_assert((kNumGrains & (kNumGrains - 1)) == 0,
+			              "kNumGrains must be a power of two for this mask");
+			d.next = static_cast<uint8_t>((d.next + 1) & (kNumGrains - 1));
 
 			// Pick any variant — in Drone the recordings are raw material, so
 			// the hoof/individual distinction does not apply.
@@ -454,11 +460,17 @@ void __not_in_flash_func(VoiceBank::droneRender)(int active, int16_t &l, int16_t
 			int32_t win = static_cast<int32_t>((dist * g.invHalf) >> 16);
 			if (win > kQ16One) win = kQ16One;
 
-			mix += mul_q16(s, win) >> 1;
+			// Plain 32-bit multiplies, NOT mul_q16: that widens to int64_t, which
+			// on the M0+ is an __aeabi_lmul library call -- and this line runs up
+			// to 32 times per sample at 48kHz. |s| <= 2048 and win <= 65536, so
+			// the product peaks at 1.3e8 and the accumulator at 5.4e8, both well
+			// inside int32. Removing the divide above took droneRender from 17546
+			// cycles to 9608; these two calls were the other half.
+			mix += ((s * win) >> 16) >> 1;
 			g.pos += g.inc;
 		}
 
-		mix = mul_q16(mix, d.level);
+		mix = (mix * d.level) >> 16;
 
 		// Fixed wide positions: the point is a stable image you can sit inside.
 		accL += mul_q15(mix, kPanCurveL[i]);

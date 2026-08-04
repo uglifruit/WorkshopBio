@@ -345,8 +345,9 @@ def frogs_order(physics, chaos=Q // 2, ticks=CTRL * 15):
 THRESH = [Q, (Q * 115) // 100, (Q * 88) // 100, (Q * 103) // 100]
 LEAK_BIAS = [0, -1, 1, 0]
 SPLASH = Q // 12
-RAIN_FLOOR = 2500
-RAIN_GAIN = (Q * 4) // 5
+RAIN_FLOOR = 9000
+RAIN_GAIN_MIN = (Q * 40) // 100
+RAIN_GAIN_SPAN = (Q * 40) // 100
 
 
 def rain(physics, chaos, pop, ticks, spook_every=0, clock_period=0):
@@ -355,6 +356,7 @@ def rain(physics, chaos, pop, ticks, spook_every=0, clock_period=0):
     fires = [0] * 4
     x = physics
     downpour = min(RAIN_FLOOR + mul_q16(Q - RAIN_FLOOR, fast_sqrt_q16(x)), Q)
+    rain_gain = RAIN_GAIN_MIN + mul_q16(RAIN_GAIN_SPAN, x)
     leak_base = 10 - (chaos * 3 // Q)
     for t in range(ticks):
         if spook_every and t % spook_every == 0 and t:
@@ -368,7 +370,7 @@ def rain(physics, chaos, pop, ticks, spook_every=0, clock_period=0):
         for i in range(pop):
             rng, r = rand_q16(rng)
             drop = max(mul_q16(mul_q16(mul_q16(mul_q16(r, r), r), downpour),
-                               RAIN_GAIN) >> 4, 0)
+                               rain_gain) >> 4, 0)
             level[i] += drop
             shift = max(5, min(12, leak_base + LEAK_BIAS[i]))
             level[i] = decay(level[i], shift)

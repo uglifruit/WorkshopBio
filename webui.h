@@ -98,6 +98,9 @@ private:
 	uint8_t  rx_[1024];
 	uint32_t rxLen_ = 0;
 	bool     inSysex_ = false;
+	// Send() pumps tud_task() so replies leave immediately; this stops that
+	// nested call from recursing without bound.
+	bool     pumping_ = false;
 };
 
 } // namespace bio
