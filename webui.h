@@ -40,6 +40,11 @@ enum : uint8_t {
 // Manufacturer ID 0x7D = "prototyping / private use".
 constexpr uint8_t kManufacturerId = 0x7D;
 
+/// Largest single upload, set by the RAM staging buffer rather than by the 1MB
+/// flash region. Writing flash takes USB down with it, so a transfer has to be
+/// received in full before any of it is committed.
+constexpr uint32_t kUploadMax = 128u * 1024u;
+
 // Error codes carried by MSG_UP_ERR.
 enum : uint8_t {
 	ERR_NONE = 0, ERR_TOO_BIG = 1, ERR_BAD_SLOT = 2, ERR_PROTOCOL = 3,
@@ -94,6 +99,7 @@ private:
 	void SendErr(uint8_t code);
 	void FlushPage();          // commit the 256-byte staging page to flash
 	void CommitHeader();
+	void WriteStagedBuffer();  // erase+program the RAM buffer, then the header
 
 	bool     uploading_ = false;
 	uint8_t  slotMode_ = 0, slotVariant_ = 0;
@@ -104,6 +110,20 @@ private:
 	uint8_t  page_[256];
 	uint32_t pageFill_ = 0;
 	uint32_t pageAddr_ = 0;
+
+	// The whole upload is staged in RAM before ANY flash is touched, because
+	// writing flash kills USB: TinyUSB's device stack and its USBCTRL_IRQ
+	// handler both live in flash, so the card cannot receive the next chunk
+	// while committing the last one. 128KB holds the largest baked recording
+	// (meteors_5, 116KB) with room to spare and leaves ~70KB of the RP2040's
+	// 264KB for everything else. This is the real cap on one upload now --
+	// several small samples still fit in a single pass, a full library does not.
+	uint8_t  buf_[kUploadMax];
+	uint32_t bufLen_ = 0;
+	uint32_t baseOff_ = 0;      // append point from the existing header
+	uint32_t slotStart_ = 0;    // where the current slot began in buf_
+	uint32_t slotLen_ = 0;
+	bool     touched_[kNumModes][kNumVariants] = {};
 
 	// The header being built up as slots arrive; written last so a half-finished
 	// upload never leaves a valid-looking directory behind.

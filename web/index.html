@@ -95,10 +95,11 @@
     replace one ecosystem and leave the rest alone.
   </p>
   <p class="note">
-    <strong>The card stops and restarts.</strong> Writing flash halts the
-    RP2040's execution, so the ecosystem stops, the LEDs show a progress bar, and
-    the card reboots into your new samples when it finishes. Uploading is a setup
-    activity, not a performance one.
+    <strong>The card keeps playing while it receives, then stops and
+    restarts.</strong> Writing flash halts the RP2040 — and takes USB down with
+    it, since the USB stack lives in flash — so the whole transfer is buffered in
+    the card's RAM first and committed in one go at the end. The ecosystem stops
+    only for that last step, then reboots into your new samples.
   </p>
   <p class="note">
     Uploads <strong>add to</strong> what is already on the card, so space is used
@@ -316,7 +317,7 @@ async function upload() {
   const prog = document.getElementById("prog");
   prog.hidden = false; prog.value = 0;
   document.getElementById("upload").disabled = true;
-  setStatus("Preparing the card… it goes silent now and restarts when done.");
+  setStatus("Sending… the card keeps playing until the last chunk arrives.");
 
   try {
     // The card now erases only the sectors this upload needs, not the whole 1MB,

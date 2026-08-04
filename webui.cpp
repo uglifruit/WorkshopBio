@@ -103,10 +103,18 @@ static void EnterUploadMode()
 
 	WebUI::stage = 2;
 
-	// Now that core 0 is spinning in RAM, silence the flash-resident ISRs so
-	// nothing can re-enter them while XIP is down.
+	// Silence every flash-resident interrupt handler. DMA_IRQ_0 and PWM_IRQ_WRAP
+	// are the audio path; USBCTRL_IRQ is TinyUSB's own, and dcd_rp2040_irq lives
+	// in flash like the rest of the stack. THIS is why upload hung at stage 5
+	// with the erase already done: the erase itself was fine, but the moment
+	// interrupts came back a pending USB interrupt vectored into flash and the
+	// stack never recovered, so the ack was queued and never sent.
+	//
+	// Nothing can talk to the host after this point, which is why the whole
+	// upload is buffered in RAM first and only committed here.
 	irq_set_enabled(DMA_IRQ_0, false);
 	irq_set_enabled(PWM_IRQ_WRAP, false);
+	irq_set_enabled(USBCTRL_IRQ, false);
 
 	// Prime the SDK's boot2 copy while XIP is definitely still up.
 	//
@@ -256,6 +264,45 @@ void __not_in_flash_func(WebUI::FlushPage)()
 	pageFill_ = 0;
 }
 
+/// Commit the RAM-staged upload to flash. Runs only after EnterUploadMode(),
+/// with audio stopped and USB already dead — nothing here can report progress,
+/// so the LED stage counter is the only visible signal.
+void __not_in_flash_func(WebUI::WriteStagedBuffer)()
+{
+	// Where the new audio lands, appended after whatever is already stored and
+	// rounded up to a sector so the erase cannot clip the previous recording.
+	uint32_t base = (baseOff_ + kFlashSector - 1u) & ~(kFlashSector - 1u);
+	uint32_t dst  = kUserDataOff + base;
+
+	uint32_t end = (dst + bufLen_ + kFlashSector - 1u) & ~(kFlashSector - 1u);
+	if (end > dst) EraseRegion(dst, end - dst);
+	WebUI::stage = 5;
+
+	// Whole 256-byte pages, then a padded tail.
+	uint32_t off = 0;
+	while (off + 256 <= bufLen_)
+	{
+		ProgramPage(dst + off, buf_ + off);
+		off += 256;
+	}
+	if (off < bufLen_)
+	{
+		memset(page_, 0, sizeof(page_));
+		memcpy(page_, buf_ + off, bufLen_ - off);
+		ProgramPage(dst + off, page_);
+	}
+	WebUI::stage = 6;
+
+	// Staging-buffer offsets become flash offsets now that the base is known.
+	for (int m = 0; m < kNumModes; m++)
+		for (int v = 0; v < kNumVariants; v++)
+			if (hdr_.size[m][v] > 0 && touched_[m][v])
+				hdr_.offset[m][v] += base;
+
+	writeOff_ = base + bufLen_;
+	CommitHeader();
+}
+
 void __not_in_flash_func(WebUI::CommitHeader)()
 {
 	FlushPage();
@@ -290,9 +337,12 @@ void __not_in_flash_func(WebUI::HandleSysex)(const uint8_t *msg, uint32_t len)
 			MSG_INFO, kUserVersion,
 			static_cast<uint8_t>(HaveUserSamples() ? 1 : 0),
 			static_cast<uint8_t>(kHaveSamples ? 1 : 0),
-			static_cast<uint8_t>((kUserDataLen >> 14) & 0x7F),
-			static_cast<uint8_t>((kUserDataLen >> 7)  & 0x7F),
-			static_cast<uint8_t>( kUserDataLen        & 0x7F),
+			// Report the STAGING BUFFER size, not the flash region. One upload
+			// is now limited by the RAM it is buffered in, not by the 1MB it
+			// eventually lands in -- the browser must reject on the real limit.
+			static_cast<uint8_t>((kUploadMax >> 14) & 0x7F),
+			static_cast<uint8_t>((kUploadMax >> 7)  & 0x7F),
+			static_cast<uint8_t>( kUploadMax        & 0x7F),
 			static_cast<uint8_t>(kNumModes) };
 		Send(info, 8);
 		break;
@@ -307,10 +357,11 @@ void __not_in_flash_func(WebUI::HandleSysex)(const uint8_t *msg, uint32_t len)
 		          |  static_cast<uint32_t>(p[3]);
 		if (expected_ > kUserDataLen) { SendErr(ERR_TOO_BIG); break; }
 
-		// Audio stops here, for the whole upload, and the card reboots at the
-		// end. Nothing below this line can run concurrently with the engine.
-		EnterUploadMode();
-
+		// NOTE: the card keeps playing through the whole transfer now. Flash is
+		// not touched until MSG_UP_END, because writing it means killing USB --
+		// TinyUSB's device stack and its USBCTRL_IRQ handler are all in flash, so
+		// the card cannot receive the next chunk and write the last one at the
+		// same time. Everything is buffered in RAM and committed in one go.
 		uploading_ = true;
 		pageFill_ = 0;
 
@@ -323,13 +374,14 @@ void __not_in_flash_func(WebUI::HandleSysex)(const uint8_t *msg, uint32_t len)
 		if (cur->magic == kUserMagic && cur->version == kUserVersion)
 		{
 			memcpy(&hdr_, cur, sizeof(hdr_));
-			writeOff_ = cur->totalBytes;
+			baseOff_ = cur->totalBytes;
 		}
 		else
 		{
 			memset(&hdr_, 0, sizeof(hdr_));
-			writeOff_ = 0;
+			baseOff_ = 0;
 		}
+		memset(touched_, 0, sizeof(touched_));
 
 		WebUI::stage = 4;
 
@@ -342,12 +394,11 @@ void __not_in_flash_func(WebUI::HandleSysex)(const uint8_t *msg, uint32_t len)
 		if (writeOff_ + expected_ > kUserDataLen) { SendErr(ERR_TOO_BIG); break; }
 		pageAddr_ = kUserDataOff + writeOff_;
 
-		{
-			// kUserDataOff is sector-aligned, so this start is too.
-			uint32_t end = (pageAddr_ + expected_ + kFlashSector - 1u)
-			               & ~(kFlashSector - 1u);
-			if (end > pageAddr_) EraseRegion(pageAddr_, end - pageAddr_);
-		}
+		// No erase here any more -- see above. Just check it will fit the RAM
+		// staging buffer, which is the real limit on one upload now.
+		if (expected_ > sizeof(buf_)) { SendErr(ERR_TOO_BIG); break; }
+		bufLen_ = 0;
+
 		WebUI::stage = 5;
 		SendAck(0, 0);
 		break;
@@ -363,12 +414,12 @@ void __not_in_flash_func(WebUI::HandleSysex)(const uint8_t *msg, uint32_t len)
 			SendErr(ERR_BAD_SLOT);
 			break;
 		}
-		// Slots start on a page boundary so each can be programmed independently.
-		FlushPage();
-		writeOff_ = pageAddr_ - kUserDataOff;
-		hdr_.offset[slotMode_][slotVariant_] = writeOff_;
-		hdr_.size[slotMode_][slotVariant_] = 0;
-		SendAck(1, writeOff_);
+		// Slots are staged in RAM, each starting page-aligned so it can still be
+		// programmed independently when the whole lot is committed at UP_END.
+		bufLen_ = (bufLen_ + 255u) & ~255u;
+		slotStart_ = bufLen_;
+		slotLen_ = 0;
+		SendAck(1, bufLen_);
 		break;
 	}
 
@@ -377,49 +428,49 @@ void __not_in_flash_func(WebUI::HandleSysex)(const uint8_t *msg, uint32_t len)
 		if (!uploading_) { SendErr(ERR_PROTOCOL); break; }
 		uint8_t dec[512];
 		uint32_t got = Decode7bit(p + 1, n - 1, dec, sizeof(dec));
-		if (writeOff_ + got > kUserDataLen) { SendErr(ERR_TOO_BIG); break; }
+		if (bufLen_ + got > sizeof(buf_)) { SendErr(ERR_TOO_BIG); break; }
 
-		for (uint32_t i = 0; i < got; i++)
-		{
-			page_[pageFill_++] = dec[i];
-			if (pageFill_ == 256)
-			{
-				ProgramPage(pageAddr_, page_);
-				pageAddr_ += 256;
-				pageFill_ = 0;
-			}
-		}
-		writeOff_ += got;
-		hdr_.size[slotMode_][slotVariant_] += got;
+		// Straight into RAM. Flash is untouched until UP_END, because writing it
+		// takes USB down with it.
+		memcpy(buf_ + bufLen_, dec, got);
+		bufLen_ += got;
+		slotLen_ += got;
 		WebUI::stage = 6;
-		SendAck(2, writeOff_);
+		SendAck(2, bufLen_);
 		break;
 	}
 
 	case MSG_UP_SLOTEND:
 		if (!uploading_) { SendErr(ERR_PROTOCOL); break; }
-		SendAck(3, hdr_.size[slotMode_][slotVariant_]);
+		// Record where this slot landed in the staging buffer; the offsets are
+		// rewritten to flash offsets when the buffer is committed.
+		hdr_.offset[slotMode_][slotVariant_] = slotStart_;
+		hdr_.size[slotMode_][slotVariant_] = slotLen_;
+		touched_[slotMode_][slotVariant_] = true;
+		SendAck(3, slotLen_);
 		break;
 
 	case MSG_UP_END:
+	{
 		if (!uploading_) { SendErr(ERR_PROTOCOL); break; }
-		CommitHeader();
-		WebUI::stage = 7;
 		uploading_ = false;
-		SendAck(4, writeOff_);
 
-		// Reboot rather than trying to resume: the audio interrupt is off, the
-		// sample pointers the engine cached are stale, and a restart resolves the
-		// new slots cleanly at boot.
-		//
-		// tud_midi_stream_write only QUEUES the ack -- tud_task() is what pushes
-		// it to the host, and we are called from inside tud_task() right now. A
-		// plain busy_wait here therefore rebooted with the ack still sitting in
-		// the buffer, which is exactly the "upload did nothing" symptom: the
-		// browser saw no reply and the card restarted underneath it.
-		FlushUsb(200);
+		// Ack and push it out BEFORE any of this touches flash. Once the write
+		// starts, USB is gone -- TinyUSB's stack and its USBCTRL_IRQ handler live
+		// in flash -- so this is the last chance to say anything to the browser.
+		// It is an "about to commit" ack, not a "committed" one, and the browser
+		// treats the disconnect that follows as success.
+		SendAck(4, bufLen_);
+		FlushUsb(150);
+
+		// Everything below runs with the card silent and USB dead.
+		EnterUploadMode();
+		WriteStagedBuffer();
+		WebUI::stage = 7;
+
 		watchdog_reboot(0, 0, 0);
 		break;
+	}
 
 #ifdef BIO_PROFILE
 	// Only exists in profile builds, so the released firmware is byte-identical
