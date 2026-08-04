@@ -85,6 +85,21 @@
     <span id="status">Not connected.</span>
   </div>
 
+  <!-- Card capacity. Persistent, unlike the status line, which the next message
+       overwrites — "how much room is left" is something you want to glance at
+       while deciding what to load, not something to remember from a toast. -->
+  <div id="cap" hidden style="background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:.8rem 1rem;margin-bottom:1.5rem">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:1rem;margin-bottom:.45rem">
+      <strong style="font-size:.9rem">Card storage</strong>
+      <span id="capnum" class="note"></span>
+    </div>
+    <div style="display:flex;height:9px;border-radius:5px;background:var(--line);overflow:hidden">
+      <div id="capused" style="width:0;background:var(--accent);transition:width .2s"></div>
+      <div id="capstage" style="width:0;background:var(--warn);transition:width .2s"></div>
+    </div>
+    <p id="capnote" class="note" style="margin:.45rem 0 0"></p>
+  </div>
+
   <div id="profout" hidden style="background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:1rem;margin-bottom:1.5rem">
     <h2 style="margin:0 0 .5rem;font-size:1rem">Timing — worst case per sample</h2>
     <p class="note" style="margin:0 0 .75rem">
@@ -121,11 +136,8 @@
     replace one ecosystem and leave the rest alone.
   </p>
   <p class="note">
-    <strong>The card keeps playing while it receives, then stops and
-    restarts.</strong> Writing flash halts the RP2040 — and takes USB down with
-    it, since the USB stack lives in flash — so the whole transfer is buffered in
-    the card's RAM first and committed in one go at the end. The ecosystem stops
-    only for that last step, then reboots into your new samples.
+    The card keeps playing while it receives, then stops for the final write and
+    restarts into your new samples.
   </p>
   <p class="note">
     Uploads <strong>add to</strong> what is already on the card — send one sample,
@@ -332,15 +344,10 @@ async function connect() {
       const total = info.length > 15 ? ((info[13] << 14) | (info[14] << 7) | info[15]) : 0;
       state.info = { cap, user, used, total };
 
-      const kb = (n) => `${Math.round(n / 1024)} KB`;
-      let msg = `Connected. `;
-      if (total) {
-        const free = Math.max(0, total - used);
-        msg += `${kb(free)} free of ${kb(total)} on the card, ` +
-               `${kb(cap)} per upload. `;
-      }
-      msg += user ? "User samples loaded." : "Using built-in samples.";
-      setStatus(msg, "ok");
+      // Capacity has its own panel now, so the status line just says what state
+      // the card is in rather than repeating the numbers.
+      setStatus("Connected. " +
+                (user ? "User samples loaded." : "Using built-in samples."), "ok");
       document.getElementById("revert").disabled = !user;
 
       // Ask what is actually on the card, so each mode can say whether it is
@@ -569,6 +576,7 @@ async function revert() {
     // longer exists.
     state.slots = {};
     state.onCard = null;   // the card is back to built-in everywhere
+    if (state.info) state.info.used = 0;   // region emptied and reclaimed
     for (const el of document.querySelectorAll(".slot")) {
       el.classList.remove("filled");
       const len = el.querySelector(".len");
@@ -642,7 +650,41 @@ function build() {
 }
 
 /// Refresh every mode's card/staged status. Called on load, connect and drop.
+/// Card storage bar: what is committed, what this page is about to add, and how
+/// much is left. Staged bytes are shown in the warning colour so the cost of an
+/// upload is visible BEFORE sending it rather than as a rejection afterwards.
+function updateCapacity() {
+  const box = document.getElementById("cap");
+  if (!box) return;
+  if (!state.info || !state.info.total) { box.hidden = true; return; }
+  box.hidden = false;
+
+  const { used, total, cap } = state.info;
+  // Staged size is approximate: the real bytes are produced at upload time after
+  // loudness matching and trimming. Length in samples is the right order of
+  // magnitude and 8-bit mono means one byte per sample.
+  const staged = Object.values(state.slots)
+                       .reduce((n, s) => n + (s.audio ? s.audio.length : 0), 0);
+
+  const kb = (n) => `${Math.round(n / 1024)} KB`;
+  const pctUsed  = Math.min(100, (used / total) * 100);
+  const pctStage = Math.min(100 - pctUsed, (staged / total) * 100);
+  const free = Math.max(0, total - used - staged);
+
+  document.getElementById("capused").style.width  = `${pctUsed}%`;
+  document.getElementById("capstage").style.width = `${pctStage}%`;
+  document.getElementById("capnum").textContent =
+    `${Math.round((free / total) * 100)}% free — ${kb(free)} of ${kb(total)}`;
+
+  let note = used ? `${kb(used)} in use. ` : "Nothing uploaded yet. ";
+  if (staged) note += `${kb(staged)} staged in this page. `;
+  note += `Up to ${kb(cap)} per upload — bigger sets go in more than one pass, ` +
+          `since uploads add to what is already there.`;
+  document.getElementById("capnote").textContent = note;
+}
+
 function updateUsage() {
+  updateCapacity();
   MODES.forEach(([name, , count], mi) => {
     const el = document.getElementById(`use${mi}`);
     if (!el) return;
