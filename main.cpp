@@ -348,9 +348,12 @@ private:
 		Switch sw = SwitchVal();
 		if (sw == Switch::Down)
 		{
-			// Do not start counting until the boot splash has finished, or the
-			// power-on Drone hold would arm the USB timer as well.
-			if (splash_ == 0 && downTicks_ < kHoldTicks) downTicks_++;
+			// Do not start counting until the boot splash has finished AND the
+			// switch has been released at least once. Without the second
+			// condition, holding at power-on to pick Drone and simply not letting
+			// go fast enough would drop you straight into USB mode ~3.5s later —
+			// booting an instrument should never hand the card to the uploader.
+			if (splash_ == 0 && !holdFired_ && downTicks_ < kHoldTicks) downTicks_++;
 
 			if (downTicks_ == kHoldTicks && !holdFired_)
 			{
@@ -367,6 +370,13 @@ private:
 				mode_ = static_cast<uint8_t>((mode_ + 1) % kNumModes);
 				engines_[mode_]->reset(seed_ ^ (mode_ * 2654435761u));
 				clearOutputs();
+
+				// Clear the peaks with the mode change, so a reading always
+				// describes the ecosystem you actually played rather than the
+				// worst of every mode you passed through on the way to it.
+				// The old Down-tap reset did this, and dropping it in the switch
+				// rework left no way to measure one mode without a power cycle.
+				BIO_PROFILE_RESET();
 			}
 			downTicks_ = 0;
 			holdFired_ = false;
