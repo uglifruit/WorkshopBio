@@ -345,6 +345,9 @@ def frogs_order(physics, chaos=Q // 2, ticks=CTRL * 15):
 THRESH = [Q, (Q * 115) // 100, (Q * 88) // 100, (Q * 103) // 100]
 LEAK_BIAS = [0, -1, 1, 0]
 SPLASH = Q // 12
+METEOR_GAIN_MIN = Q // 5
+METEOR_GAIN_SPAN = Q - Q // 5
+
 RAIN_FLOOR = 9000
 RAIN_GAIN_MIN = (Q * 40) // 100
 RAIN_GAIN_SPAN = (Q * 40) // 100
@@ -411,10 +414,11 @@ def meteors(physics, chaos, pop, ticks, spook_every=0, clock_period=0):
             tt = (physics - Q // 2) * 2
             depth, floor = Q - tt, tt
         eff = floor + mul_q16(density, depth)
-        p = mul_q16(eff, eff) >> 8
+        meteor_gain = METEOR_GAIN_MIN + mul_q16(METEOR_GAIN_SPAN, physics)
+        p = mul_q16(mul_q16(eff, eff), meteor_gain) >> 8
         if chaos:
             rng, r = rand_q16(rng)
-            p += mul_q16(r, chaos) >> 11
+            p += mul_q16(mul_q16(r, chaos), meteor_gain) >> 11
         for a in range(pop):
             for k in range(SWARM_PER_AGENT):
                 rng, r = rand_q16(rng)

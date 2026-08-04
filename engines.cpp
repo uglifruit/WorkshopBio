@@ -655,6 +655,11 @@ void __not_in_flash_func(RainEngine::tick)(const Ctrl &c, EngineOut &out)
 // Mode 5 — Meteors: inhomogeneous Poisson process
 // ===========================================================================
 
+// Firing-probability gain, Q16, ramped 0.2 -> 1.0 across Knob Main. The CCW end
+// should be a nearly empty sky you wait on, not a patter.
+static constexpr int32_t kMeteorGainMin  = kQ16One / 5;
+static constexpr int32_t kMeteorGainSpan = kQ16One - kQ16One / 5;
+
 void MeteorsEngine::reset(uint32_t seed)
 {
 	rng_ = seed | 1u;
@@ -717,8 +722,18 @@ void __not_in_flash_func(MeteorsEngine::tick)(const Ctrl &c, EngineOut &out)
 	// The extra >>1 accounts for the swarm: kSwarmPerAgent members now roll
 	// against this probability for every output channel, so without it the
 	// perceived rate would triple against the tuning done at 4 agents.
-	int32_t p = mul_q16(effective, effective) >> 8;
-	if (c.chaos > 0) p += mul_q16(rand_q16(rng_), c.chaos) >> 11;
+	// Gain ramps across the knob rather than being constant, so the CCW end can
+	// be genuinely sparse -- isolated strikes you wait for -- without capping the
+	// barrage at the CW end. A fixed gain gave ~0.5 strikes/sec at zero, which is
+	// a steady patter rather than the empty sky the bottom of the knob implies.
+	// mul_q16 (64-bit intermediate) is required here, not an optimisation target:
+	// these are full-scale Q16 values, and 65536*65536 is exactly 2^31, which
+	// overflows a signed 32-bit multiply. Unlike droneRender -- where the inputs
+	// are 12-bit audio and 32 bits is provably enough -- the library call stays.
+	// It costs six __aeabi_lmul per control tick, not per sample.
+	int32_t meteorGain = kMeteorGainMin + mul_q16(kMeteorGainSpan, c.physics);
+	int32_t p = mul_q16(mul_q16(effective, effective), meteorGain) >> 8;
+	if (c.chaos > 0) p += mul_q16(mul_q16(rand_q16(rng_), c.chaos), meteorGain) >> 11;
 
 	// Like Geese, Meteors runs a swarm folded onto the four outputs. Individual
 	// meteors are independent, so a channel strikes if any of its members does —
