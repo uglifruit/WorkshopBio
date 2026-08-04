@@ -278,11 +278,113 @@ Geese is the mode to watch: its excitation spread is the only O(n²) path left, 
 a full cascade is 12×11 = 132 inner iterations in one tick. Frogs was already made
 O(n) by the mean-field rewrite.
 
+> **Both halves of that paragraph turned out to be wrong.** Geese measured
+> *fourth* of six, and Frogs' O(n) rewrite is still second worst. See "The
+> measurements, and two wrong predictions" below. Left here unedited because the
+> reasoning looked sound right up until it was checked.
+
 His second point stands too: if the measurement shows headroom, the control rate
 can go *up* for finer trigger timing. That is a one-line change to `kCtrlDiv` —
 but worth making only once the headroom is a number rather than an assumption.
 
-**Status: instrumented, not yet measured on hardware.**
+**Status: measured — see below.**
+
+---
+
+## The measurements, and two wrong predictions
+
+Three rounds of hardware readings settled it. The first two rounds each fixed a
+real problem and each ended with a guess about what would matter next. **Both
+guesses were wrong**, and the sweep that proved it took ten minutes.
+
+### Round 1 — the overruns were XIP flash misses
+
+Moving the hot path into RAM: Engine 3.5× faster, Voices 3×, Outputs 4×,
+overruns down ~92%. Everything the card computes itself came inside budget.
+
+### Round 2 — USB was the entire remaining problem
+
+`tud_task()` measured **29895–35850 cycles**, up to 14× the whole 20.83 µs
+sample. TinyUSB's device stack is unbounded by design and was being called from
+inside the audio interrupt. It moved to core 1.
+
+**That worked completely.** USB now measures **0 cycles** on core 0 in every mode.
+It is the one unambiguous success in this log.
+
+The same round split `uiTick()` (LED rendering) half a divider away from the
+engine so the two costs never land in the same slot. That worked too: Outputs
+peaks at 336–526 cycles across all six modes.
+
+### Round 3 — the full sweep
+
+| Mode | Engine | Total | Overruns |
+|------|-------:|------:|---------:|
+| **Cicadas** | **7830** (300.7%) | 8708 (334.4%) | 1225 |
+| **Frogs** | **5606** (215.3%) | 6509 (250.0%) | 1640 |
+| Horses (pop 4) | 3847 (147.7%) | 4581 (175.9%) | **11030** |
+| Geese | 3118 (119.7%) | 3900 (149.8%) | 249 |
+| Drips | 2648 (101.7%) | 3530 (135.6%) | 3 |
+| Meteors | 2139 (82.1%) | 2915 (111.9%) | 3 |
+
+Budget is 2604 cycles. **Every mode is over on Total. Four of six are over on
+Engine alone.**
+
+### The two wrong predictions
+
+**"Geese is the mode to watch."** It is *fourth*. The reasoning was that its
+excitation spread is the only O(n²) path left, 12×11 = 132 inner iterations. But
+Cicadas is **2× worse** than Horses and 3× over budget with no O(n²) path at all
+— it walks its swarm up to four separate times per tick (spook, loudness, main
+loop, patch reduction), and each iteration is heavy. **Iteration count did not
+predict cost; per-iteration weight did.** Same class of error as the "/32 buys
+you time" claim: reasoning about the code instead of measuring it.
+
+**"Frogs was already made O(n) by the mean-field rewrite."** True, and it is
+still second worst at 5606 cycles. O(n) is not the same as cheap.
+
+### Peak and frequency are different faults
+
+The overrun counts do not track the peaks. Horses has **11030** overruns at 3847
+cycles; Cicadas has **1225** at 7830. Peak says *how far* over, overrun count says
+*how often*. Horses overruns constantly by a little, Cicadas rarely but
+massively. Both are audible, differently — and a fix that only chases the peak
+would leave Horses' 11030 in place.
+
+### Horses: the cost is mostly fixed, not per-agent
+
+Sweeping population on Horses:
+
+| Population | Engine | Overruns |
+|-----------:|-------:|---------:|
+| 1 | 2065 (79.3%) | 3 |
+| 4 | 3847 (147.7%) | 11030 |
+
+Three extra horses cost 1782 cycles — **~594 per horse**, leaving a fixed floor
+around **1470 cycles**, roughly 70% of the population-1 cost. The `Engine` scope
+wraps all of `controlTick()`, so knob reads, CV reads, clock tracking and voice
+dispatch are inside that floor. Two loops in the Horses tick also run
+`kNumAgents²` = 16 iterations regardless of population (`c.spook` reset and the
+`gait != lastGait_` reset), ignoring the early-out at `engines.cpp:143`.
+
+A prediction that per-agent splitting would quarter the cost was therefore also
+wrong: it caps the variable part but leaves the floor untouched.
+
+### What the numbers rule out
+
+The developer's second point — that headroom could buy a *higher* control rate —
+is dead. There is no headroom. `kCtrlDiv` cannot go below 32 until Engine fits.
+
+Per-mode micro-optimisation is the wrong strategy: the two modes worth starting
+on by intuition (Horses, Geese) are third and fourth. The costs share one shape
+— **every engine does its whole swarm in one tick, inside one 20.83 µs slot** —
+and `kCtrlDiv` cannot help, because it lowers average load and not the deadline.
+
+**Caveat on this data:** one reading per mode, and peaks reset on each read. The
+Horses sweep showed the range *within* one mode is wider than the gap between
+modes, so Drips and Meteors sitting at 3 overruns is provisional — it may only
+mean that knob position was never swept.
+
+**Status: measured. Fix not yet attempted.**
 
 ---
 
@@ -293,15 +395,20 @@ but worth making only once the headroom is a number rather than an assumption.
   worse than none.
 - **No host C++ compiler on this machine**, which is why the harness is a Python
   model rather than `tools/simulate.cpp` compiling the real sources.
-- **CPU timing is now measurable** — see the section above. The old claim here
-  ("~55 cycles/sample amortised") measured the wrong quantity and has been
-  removed.
+- **CPU timing is measured, and every mode is over budget** — see the section
+  above. The old claim here ("~55 cycles/sample amortised") measured the wrong
+  quantity and has been removed.
+- **The card currently drops samples in all six modes.** Cicadas is worst at 3×
+  budget, Horses overruns most often at 11030 per read. This is a known, measured
+  defect, not a suspicion.
 - **Drone mode has never been heard.** Its grain rates and stretch factors are
   calculated, not auditioned. Same for the audio-reactive thresholds, which are
   untested against real signal levels.
-- **The USB path has never run on hardware.** TinyUSB enumeration, SysEx
-  reassembly and flash writing are verified only in the sense that they compile
-  and that the 7-bit codec round-trips against the firmware's decoder.
+- **The USB path now partly runs on hardware.** Enumeration, SysEx round-trip and
+  the browser's `MSG_PROF_GET` query are proven — that is how the timing above was
+  read. **Sample upload and flash writing are still unproven**: no upload has been
+  performed, so `WebUI::flashBusy` and core 0's RAM-resident park during
+  `flash_range_erase` have never actually been exercised.
 - **Listening beats simulation, and simulation beats reading the code.** Every
   fix in this log after the first release came from someone playing the card, and
   more than one of my confident first guesses was wrong until I measured
