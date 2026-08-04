@@ -70,6 +70,12 @@ public:
 	/// interrupt handler. That deadlocked every time — see EnterUploadMode().
 	static volatile bool uploadMode;
 
+	/// Set by core 0 once it has stopped inside its RAM-resident handler and is
+	/// spinning. Core 1 waits for this before touching flash — without it, core 0
+	/// may still be executing ComputerCard's flash-resident callback when XIP
+	/// drops, which hard-faults the chip.
+	static volatile bool core0Parked;
+
 	/// 0..kQ16One, for the LED progress display.
 	int32_t Progress() const;
 

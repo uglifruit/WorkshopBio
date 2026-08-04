@@ -95,17 +95,29 @@ public:
 
 	virtual void __not_in_flash_func(ProcessSample)()
 	{
-		// Flash writes no longer park here. The old version spun in this very
-		// function until core 1 finished, which deadlocked the card: this runs
-		// inside the DMA interrupt handler, so spinning for the seconds an erase
-		// takes starved the audio DMA and it never restarted — no sound, no LEDs,
-		// no switch, until a power cycle. Worse, ProcessSample is `virtual`, so
-		// merely DISPATCHING to it reads a vtable that lives in flash; with XIP
-		// down that faults before any park could be entered.
+		// An upload is starting: park HERE, in RAM, and never return to flash.
 		//
-		// Uploading now disables DMA_IRQ_0 outright and reboots when it finishes
-		// (see WebUI::BeginUploadMode), so this handler is not running at all
-		// while flash is being written and there is nothing to guard against.
+		// Masking DMA_IRQ_0 from core 1 is not sufficient on its own, which is
+		// what the first two attempts got wrong. ComputerCard::AudioCallback,
+		// BufferFull and AudioWorker's outer loop all live in flash, and the CV
+		// output runs a second flash-resident ISR (PWM_IRQ_WRAP -> OnCVPWMWrap).
+		// Any of them executing when flash_range_erase drops XIP is a hard fault.
+		//
+		// So core 0 stops inside this function, which IS RAM-resident, mutes the
+		// outputs, tells core 1 it has arrived, and spins until the reboot. It
+		// never returns, so the flash-resident caller never runs again.
+		//
+		// This is safe now in a way it was not before: USB lives on core 1, so
+		// spinning core 0 no longer stalls the upload it is waiting for.
+		if (WebUI::uploadMode)
+		{
+			AudioOut1(0);
+			AudioOut2(0);
+			PulseOut1(false);
+			PulseOut2(false);
+			WebUI::core0Parked = true;
+			for (;;) tight_loop_contents();
+		}
 
 		// Times the WHOLE callback, which is the number that decides whether
 		// audio glitches — not the per-sample average.

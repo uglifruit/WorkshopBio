@@ -14,6 +14,7 @@
 namespace bio {
 
 volatile bool WebUI::uploadMode = false;
+volatile bool WebUI::core0Parked = false;
 
 // ---------------------------------------------------------------------------
 // 7-bit encoding
@@ -78,8 +79,30 @@ uint32_t Decode7bit(const uint8_t *src, uint32_t srcLen, uint8_t *dst,
 static void EnterUploadMode()
 {
 	if (WebUI::uploadMode) return;
+
+	// Raise the flag FIRST, then wait for core 0 to acknowledge that it has
+	// reached its RAM-resident park. Disabling the interrupt alone was not
+	// enough and this is why the second attempt still hung:
+	//
+	//   - ComputerCard::AudioCallback and BufferFull live in FLASH, so core 0
+	//     can be executing them at the moment XIP drops, and
+	//   - the CV output runs a SECOND interrupt, PWM_IRQ_WRAP -> OnCVPWMWrap,
+	//     also in flash, which kept firing after DMA_IRQ_0 was masked.
+	//
+	// Either one faults the instant flash_range_erase kills XIP. So core 0 now
+	// parks itself in RAM and says so, and only then is it safe to write.
 	WebUI::uploadMode = true;
+
+	// Wait for the park BEFORE masking anything. ProcessSample only runs when
+	// DMA_IRQ_0 fires, so masking first would guarantee it never sees the flag
+	// and never parks. At 48kHz the next callback is 21us away.
+	absolute_time_t deadline = make_timeout_time_ms(250);
+	while (!WebUI::core0Parked && !time_reached(deadline)) tight_loop_contents();
+
+	// Now that core 0 is spinning in RAM, silence the flash-resident ISRs so
+	// nothing can re-enter them while XIP is down.
 	irq_set_enabled(DMA_IRQ_0, false);
+	irq_set_enabled(PWM_IRQ_WRAP, false);
 }
 
 /// Keep servicing USB for `ms` so queued replies actually reach the host.

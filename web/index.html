@@ -316,7 +316,7 @@ async function upload() {
   const prog = document.getElementById("prog");
   prog.hidden = false; prog.value = 0;
   document.getElementById("upload").disabled = true;
-  setStatus("Erasing… the card is muted while this runs.");
+  setStatus("Preparing the card… it goes silent now and restarts when done.");
 
   try {
     // The card now erases only the sectors this upload needs, not the whole 1MB,
@@ -428,7 +428,10 @@ function build() {
     const slots = document.createElement("div");
     slots.className = "slots";
     for (let v = 0; v < count; v++) {
-      const s = document.createElement("label");
+      // A div, not a label. As a <label> wrapping the file input, the browser
+      // opened the picker natively AND the onclick below opened it again --
+      // so choosing one file meant answering the dialog twice.
+      const s = document.createElement("div");
       s.className = "slot";
       s.innerHTML = `<span class="n">${v + 1}</span><span class="len">empty</span>`;
       const inp = document.createElement("input");

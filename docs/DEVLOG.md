@@ -556,6 +556,57 @@ around 10%, and reach ~18/s at full.
 
 ---
 
+## The uploader, third attempt: masking an interrupt is not stopping a core
+
+Two rewrites in, upload still hung the card. The mistake was the same both times,
+just better hidden: **`irq_set_enabled(DMA_IRQ_0, false)` stops the interrupt from
+firing again. It does not stop core 0 from executing flash.**
+
+Three things were still live when `flash_range_erase` dropped XIP:
+
+- `ComputerCard::AudioCallback` and `BufferFull` are **in flash**. Core 0 can be
+  inside them at the moment of the erase — masking the IRQ does not evict it.
+- `AudioWorker`'s outer `while(1)` is RAM-resident, but it returns into and calls
+  flash-resident code.
+- The CV outputs run a **second flash-resident ISR**, `PWM_IRQ_WRAP ->
+  OnCVPWMWrap`, which was never masked at all and kept firing throughout.
+
+Any one of them faults the chip. `ProcessSample` being `__not_in_flash_func` was
+never the point: what matters is everything *around* it.
+
+Core 0 now parks inside `ProcessSample` itself — which is RAM-resident — mutes
+its outputs, sets `core0Parked`, and **spins forever**. It never returns, so the
+flash-resident caller never runs again. Core 1 raises `uploadMode`, waits for the
+acknowledgement (the next callback is 21us away), and only *then* masks both
+IRQs and touches flash. Order matters: masking first would mean `ProcessSample`
+never runs again, never sees the flag, and never parks — a deadlock built out of
+the fix for a deadlock.
+
+This is safe now in a way it was not in the first attempt, and the reason is
+worth stating: USB moved to core 1, so spinning core 0 no longer stalls the very
+transfer it is waiting on.
+
+### Two browser bugs, both reported rather than found
+
+- **The file picker opened twice per sample.** Each slot was a `<label>` wrapping
+  a hidden file input, so the browser opened the dialog natively *and* the
+  slot's `onclick` called `inp.click()` again. Now a `<div>`.
+- **"Erasing… the card is muted while this runs"** described the old behaviour,
+  where every upload wiped the whole 1MB region. It erases only the sectors it
+  needs now and reboots at the end, so the message says that instead.
+
+### Drone has plateaued
+
+Two reads of the identical build: Voices 3398 then 3499, overruns 3688 then 7321.
+That spread is run-to-run variance, not a regression — the mode sits at ~130% of
+budget and there is nothing left in the loop to remove. Further gains need fewer
+grains or fewer voices, which is an audible change to the texture and therefore a
+decision to make by ear rather than an optimisation to slip in.
+
+**Status: built and staged. The uploader has still never completed.**
+
+---
+
 ## Standing notes
 
 - **`tools/simulate.py` duplicates the C++ constants.** It will drift if
