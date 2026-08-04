@@ -47,6 +47,12 @@ static constexpr int kBootWindowSamples = 48000 / 2;   // ~0.5s
 // apart is by ear, and a Drone patch is easily mistaken for broken samples.
 static constexpr int kSplashSamples = 48000;           // ~1s
 
+// How long the momentary switch must be held to hand the card over to USB.
+// Two seconds is long enough that no tap reaches it by accident, and the LEDs
+// fill as it counts so the gesture is visible rather than guessed at.
+// Measured in control ticks, because that is where the switch is sampled.
+static constexpr int32_t kHoldTicks = 2 * kCtrlRate;   // ~2s at 1.5kHz
+
 class BioMimicryCard : public ComputerCard
 {
 public:
@@ -80,11 +86,26 @@ public:
 		multicore_launch_core1(core1Entry);
 	}
 
-	/// Core 1: nothing but USB. It must not touch anything core 0 owns.
+	/// Core 1: idle until the switch is held, then nothing but USB. It must not
+	/// touch anything core 0 owns.
+	///
+	/// v1.1.0 will put the physics here — the idle wait below is the space that
+	/// makes that possible, and the reason USB had to become modal first.
 	static void __not_in_flash_func(core1Entry)()
 	{
-		// Wait for core 0 to finish booting and construct the WebUI.
+		// Wait for core 0 to finish booting and publish the globals.
 		while (!gUsbReady) tight_loop_contents();
+
+		// USB does not exist until the switch is held. Idle here until it is.
+		//
+		// This is the point of the modal design: with TinyUSB uninitialised the
+		// card does not enumerate, USBCTRL_IRQ (whose handler lives in flash) is
+		// never armed, and nothing on this core competes with the audio path
+		// while the card is being played.
+		while (!WebUI::usbMode) tight_loop_contents();
+
+		// Held: bring USB up, on this core, and stay here.
+		gWebUI->Init();
 		for (;;)
 		{
 			gWebUI->Task();
@@ -151,14 +172,17 @@ public:
 				// not something worth spending a whole boot mode on.
 				boot_ = (SwitchVal() == Switch::Down) ? BootMode::Drone
 				                                     : BootMode::Rhythm;
-				webui_.Init();
+				// NOT webui_.Init() here any more — TinyUSB is not started
+				// until the switch is held. See core1Entry.
 				gCard  = this;
 				gWebUI = &webui_;
 				gUsbReady = true;      // releases core 1
 				voices_.init(AnySamples());
 				engines_[mode_]->reset(0xB10Du);
-				// Swallow the release of the boot hold.
-				switchArmed_ = (SwitchVal() != Switch::Down);
+				// Swallow the release of the boot hold, so booting into Drone
+				// does not also read as a tap and cycle straight off Horses.
+				// downTicks_ is additionally gated on splash_ in controlTick.
+				holdFired_ = (SwitchVal() == Switch::Down);
 				// Announce what booted, because otherwise the only way to know
 				// is by ear — and a Drone patch can be mistaken for broken
 				// samples. See the splash pattern in ProcessSample.
@@ -290,9 +314,11 @@ private:
 			LedOn(5, lit > 2);
 		}
 
-		// A Down tap clears the peaks, so each mode can be measured cleanly
-		// without power-cycling.
-		if (SwitchVal() == Switch::Down) BIO_PROFILE_RESET();
+		// The peaks used to be cleared by a Down tap, which now cycles the mode —
+		// the two conflicted, so a tap both changed the ecosystem and threw away
+		// the numbers for it. Entering USB mode resets them instead
+		// (see enterUsbMode), which is the moment you stop playing and go to read
+		// them anyway.
 	}
 
 	int  profDiv_ = 0;
@@ -313,23 +339,44 @@ private:
 	// -------------------------------------------------------------------
 	void __not_in_flash_func(controlTick)()
 	{
-		// --- Switch: Down taps cycle the mode, Up/Middle sets routing. ---
+		// --- Switch: tap cycles the mode, HOLD enters USB mode. ---
+		//
+		// The mode change fires on RELEASE, not on press. It used to fire on the
+		// first tick Down was seen, which cannot coexist with a hold: beginning
+		// the hold would also cycle the ecosystem out from under you. Releasing
+		// before the hold completes is a tap; holding past it is consumed.
 		Switch sw = SwitchVal();
 		if (sw == Switch::Down)
 		{
-			if (switchArmed_)
+			// Do not start counting until the boot splash has finished, or the
+			// power-on Drone hold would arm the USB timer as well.
+			if (splash_ == 0 && downTicks_ < kHoldTicks) downTicks_++;
+
+			if (downTicks_ == kHoldTicks && !holdFired_)
 			{
-				switchArmed_ = false;
-				mode_ = static_cast<uint8_t>((mode_ + 1) % kNumModes);
-				engines_[mode_]->reset(seed_ ^ (mode_ * 2654435761u));
-				clearOutputs();
+				// Held long enough: hand the card over to USB and consume the tap.
+				holdFired_ = true;
+				enterUsbMode();
 			}
 		}
 		else
 		{
-			switchArmed_ = true;
+			if (downTicks_ > 0 && !holdFired_)
+			{
+				// A short tap, now released: next ecosystem.
+				mode_ = static_cast<uint8_t>((mode_ + 1) % kNumModes);
+				engines_[mode_]->reset(seed_ ^ (mode_ * 2654435761u));
+				clearOutputs();
+			}
+			downTicks_ = 0;
+			holdFired_ = false;
 			routing_ = (sw == Switch::Up) ? Routing::Discrete : Routing::Summed;
 		}
+
+		// In USB mode the ecosystem is stopped: no physics, no new notes, no
+		// gates. The switch above is still read (that is the whole reason this
+		// function keeps running) and the voices are left to decay on their own.
+		if (WebUI::usbMode) return;
 
 		// --- Knobs, with CV modulating Main and X. ---
 		int32_t physics = knob_to_q16(KnobVal(Knob::Main));
@@ -455,6 +502,25 @@ private:
 		// Leave the LEDs alone while the boot splash is still showing.
 		if (splash_ != 0) return;
 
+		// In USB mode all six stay lit: the card is not performing, and this is
+		// the "power-cycle to play again" indicator. An upload overrides it with
+		// its own stage count, driven from core 1.
+		if (WebUI::usbMode)
+		{
+			for (int i = 0; i < 6; i++) LedOn(i, true);
+			return;
+		}
+
+		// Holding the switch fills the LEDs left to right, so the two-second
+		// hold is something you watch arrive rather than count in your head.
+		// Releasing before the fill completes is a tap and cycles the mode.
+		if (downTicks_ > 0)
+		{
+			int lit = static_cast<int>((downTicks_ * 6) / kHoldTicks);
+			for (int i = 0; i < 6; i++) LedOn(i, i < lit);
+			return;
+		}
+
 		// Six modes on six LEDs leaves none spare for an activity indicator, so
 		// the two jobs share: the mode's own LED sits at a dim "you are here"
 		// glow and flares to full on every trigger. One light, both meanings.
@@ -552,6 +618,26 @@ private:
 		cvLevel_[0] = cvLevel_[1] = 0;
 	}
 
+	/// Hand the card over to USB, for sample management. One-way: leaving costs
+	/// a power cycle, which is the honest trade for not running TinyUSB at all
+	/// while the card is being played.
+	///
+	/// The ecosystem stops here, but the VOICES are deliberately left alone so
+	/// whatever is sounding decays naturally instead of being cut off. Rhythm
+	/// voices fall away on their own envelopes and Drone grains run off the end
+	/// of their samples, so the card goes quiet by itself within a second or two.
+	void __not_in_flash_func(enterUsbMode)()
+	{
+		clearOutputs();
+
+		// Deliberately NOT resetting the profiler here. Entering USB mode is
+		// exactly the moment you stop playing in order to go and read the
+		// numbers, so wiping them on entry would guarantee a reading of zero.
+		// They stay sticky until MSG_PROF_GET replies, which is what the web UI
+		// tells the user: play the mode, then hold, connect and read.
+		WebUI::usbMode = true; // core 1 picks this up and calls tusb_init()
+	}
+
 	static int32_t clampQ16(int32_t v)
 	{
 		if (v < 0) return 0;
@@ -581,7 +667,11 @@ private:
 	int      population_ = 1;
 
 	int      ctrlDiv_    = 0;
-	bool     switchArmed_ = false;
+	// Switch hold tracking. downTicks_ counts control ticks the switch has been
+	// held Down; holdFired_ marks that the hold already did its job, so the
+	// release is not also read as a tap.
+	int32_t  downTicks_  = 0;
+	bool     holdFired_  = false;
 	bool     spookPending_ = false;
 	bool     clockPending_ = false;
 	int32_t  clockPeriod_  = 0;   // control ticks between Pulse In 2 edges

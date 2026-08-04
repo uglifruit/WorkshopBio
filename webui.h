@@ -67,6 +67,16 @@ public:
 	/// the ecosystem, because flash writes stall execution anyway.
 	bool Uploading() const { return uploading_; }
 
+	/// Set by core 0 when the momentary switch has been held long enough to hand
+	/// the card over to USB. Core 1 watches it, initialises TinyUSB the first
+	/// time it goes true, and then services USB forever.
+	///
+	/// One-way. Sample management is a setup activity, so entering it costs a
+	/// power cycle to leave — which is also why USB is not running at all until
+	/// this is set: no enumeration, no flash-resident USBCTRL_IRQ, and no USB
+	/// stack competing with the audio path while the card is being played.
+	static volatile bool usbMode;
+
 	/// True once an upload has begun. The audio interrupt is disabled for the
 	/// whole upload and the card reboots when it ends, so this is a one-way
 	/// latch: the card is an upload appliance until it restarts.

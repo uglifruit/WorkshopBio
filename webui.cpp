@@ -13,6 +13,7 @@
 
 namespace bio {
 
+volatile bool WebUI::usbMode = false;
 volatile bool WebUI::uploadMode = false;
 volatile bool WebUI::core0Parked = false;
 volatile uint8_t WebUI::stage = 0;

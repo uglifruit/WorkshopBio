@@ -709,6 +709,76 @@ came from reading those numbers.
 
 ---
 
+## v1.1.0 Stage 0 — does a busy core 1 starve core 0?
+
+The whole v1.1.0 design rests on one assumption: that core 1 can run the physics
+without hurting core 0. That is not obvious, because **PCM playback reads flash on
+every sample** — `droneRender()` reads `g.pcm[idx]` from XIP-mapped flash at
+`voices.cpp:446`, and today that is free only because core 1 is idle.
+
+So before writing any of the split: a throwaway build where core 1 hammers flash
+in a 4096-byte read loop, which is far harsher than the real physics (those idle
+~90% of each tick). Checked in the disassembly that the loop survived
+optimisation, because a probe that compiled away would have given a falsely
+reassuring answer.
+
+Drone Geese, against the same mode's baseline:
+
+| bucket | baseline | busy core 1 | delta |
+|--------|--------:|-----------:|------:|
+| Voices | 3499 | **3092** | **−12%** |
+| Engine | 4924 | 5419 | +10% |
+| Outputs | 528 | 839 | +59% |
+| Total | 6976 | 7894 | +13% |
+
+**The assumption holds.** Voices — the PCM path, the thing at risk — went *down*,
+not up. Core 1 activity does not starve core 0's sample reads, so the split is
+sound and the physics can move.
+
+The cost landed somewhere else entirely: **Outputs +59%**, Engine +10%. Contention
+hits register work and non-PCM flash access, not the audio data. Worth watching at
+Stage 3 rather than assuming it is free, but bounded, and from a probe far worse
+than the real thing.
+
+---
+
+## v1.1.0 Stage 1 — USB becomes modal
+
+Sample management is a setup activity, so the card should not carry USB while it
+is being played. It now doesn't: **`tusb_init()` is never called until the
+momentary switch is held for two seconds.** Until then the card does not enumerate,
+`USBCTRL_IRQ` (whose handler lives in flash) is never armed, and core 1 sits in a
+`tight_loop_contents()` doing nothing.
+
+That idle wait is the point. It is the space v1.1.0 puts the physics into, and it
+is why USB had to become modal first.
+
+**The switch had to be rebuilt to allow it.** The old handler fired the mode
+change on the *first* control tick Down was seen (`main.cpp:316-332`), which cannot
+coexist with a hold — starting the hold would cycle the ecosystem out from under
+you. The mode change now fires on **release**, and a hold past `kHoldTicks`
+consumes the tap. The LEDs fill left to right as the hold counts, so the gesture is
+watched rather than guessed at; all six stay lit in USB mode, which is the
+"power-cycle to play again" indicator.
+
+Two smaller corrections fell out of it:
+
+- **The profiler's Down-tap reset is gone.** It conflicted with mode cycling — one
+  tap both changed the ecosystem and threw away its numbers.
+- **Entering USB mode deliberately does *not* reset the peaks.** That is the exact
+  moment you stop playing in order to go and read them, so wiping them on entry
+  would guarantee a reading of zero. The web UI now says so next to the button:
+  play the mode, *then* hold, connect, read.
+
+The browser also watches `onstatechange`, so a card that enumerates while the page
+is open is picked up without pressing Connect again — "card not found" now much
+more often means "not in USB mode yet" than "unplugged".
+
+**Status: built, not yet flashed. Expected: every mode identical to the tables
+above — anything that moved means the switch rework broke something.**
+
+---
+
 ## Standing notes
 
 - **`tools/simulate.py` duplicates the C++ constants.** It will drift if

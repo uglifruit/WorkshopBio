@@ -64,6 +64,13 @@
     Drop your own recordings onto the card over USB. No rebuild, no toolchain.
     Chrome or Edge (WebMIDI).
   </p>
+  <p class="note">
+    <strong>First, hold the card's momentary switch down for two seconds</strong>
+    — the LEDs fill left to right, and all six stay lit once it has handed itself
+    over to USB. The card does not appear to your computer until you do: it runs
+    no USB at all while it is playing, which is what keeps the audio path clear.
+    Then press Connect. Power-cycle the card to play it again.
+  </p>
 
   <div class="bar">
     <button id="connect">Connect</button>
@@ -78,8 +85,14 @@
     <p class="note" style="margin:0 0 .75rem">
       Budget is <strong>2604 cycles</strong> (20.83&nbsp;µs at 125&nbsp;MHz).
       Anything over that means the DMA interrupt for the next sample arrives
-      while this one is still being processed. Peaks reset on each read, so play
-      the mode you want to test, then click.
+      while this one is still being processed.
+    </p>
+    <p class="note" style="margin:0 0 .75rem">
+      <strong>These numbers are from before you held the switch.</strong> The
+      ecosystem stops when the card hands itself over to USB, so nothing is being
+      measured now — the peaks are the ones it reached while you were playing,
+      and they survive until this button reads them. So: play the mode you want
+      to test, <em>then</em> hold, connect, and click.
     </p>
     <table id="proftable"></table>
   </div>
@@ -270,7 +283,18 @@ async function connect() {
     for (const i of midi.inputs.values())
       if (/biomimicry|workshop|pico/i.test(i.name)) state.midiIn = i;
     if (!state.midiOut || !state.midiIn) {
-      setStatus("Card not found. Is it plugged in over USB?", "err");
+      // The card only enumerates once its switch has been held, so "not found"
+      // is much more likely to mean "not in USB mode yet" than "unplugged".
+      // Watch for it appearing rather than making the user press Connect again.
+      setStatus("Card not found — hold its switch for two seconds until all " +
+                "six LEDs light. Waiting…", "err");
+      midi.onstatechange = (e) => {
+        if (e.port && e.port.state === "connected" &&
+            /biomimicry|workshop|pico/i.test(e.port.name)) {
+          midi.onstatechange = null;
+          connect();
+        }
+      };
       return;
     }
     send([MSG.HELLO]);
