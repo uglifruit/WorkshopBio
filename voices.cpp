@@ -134,6 +134,15 @@ void VoiceBank::init(bool usePcm)
 			for (int v = 0; v < kNumVariants; v++) variantSlot_[m][n++] = static_cast<uint8_t>(v);
 		}
 		variantCount_[m] = static_cast<uint8_t>(n);
+
+		// Resolve every slot's pointer and length now, so note() never touches
+		// the flash header again.
+		for (int v = 0; v < kNumVariants; v++)
+		{
+			SampleRef sr = ResolveSample(m, v);
+			sampleData_[m][v] = sr.data;
+			sampleLen_[m][v]  = sr.len;
+		}
 	}
 
 	// The voice POOL is larger than the agent count, so it gets its own loop.
@@ -307,9 +316,10 @@ void __not_in_flash_func(VoiceBank::note)(int i, Mode m, int32_t accent, int32_t
 	{
 		// Play this variant's slice of the mode's blob — in Horses, the sample
 		// for the hoof that actually landed.
-		SampleRef sr = ResolveSample(mi, v.variant);
-		v.pcm    = sr.data;
-		v.pcmLen = sr.len;
+		// Cached at init — see sampleData_. This used to call ResolveSample(),
+		// which reads the user header through XIP on every single trigger.
+		v.pcm    = sampleData_[mi][v.variant];
+		v.pcmLen = sampleLen_[mi][v.variant];
 		v.pcmPos = 0;
 
 		// Start the fade-in from silence. Recordings are trimmed to their attack
@@ -488,9 +498,8 @@ void __not_in_flash_func(VoiceBank::droneUpdate)(Mode m, const int32_t *state, i
 			uint32_t r = xorshift32(d.rng) & 7u;
 			while (r >= static_cast<uint32_t>(nvar)) r -= static_cast<uint32_t>(nvar);
 			uint8_t var = variantSlot_[mi][r];
-			SampleRef sr = ResolveSample(mi, var);
-			g.pcm = sr.data;
-			g.len = sr.len;
+			g.pcm = sampleData_[mi][var];   // cached, see note()
+			g.len = sampleLen_[mi][var];
 
 			// Window shape is fixed for the grain's whole life, so pay for the
 			// divide once here instead of 48000 times a second in the renderer.

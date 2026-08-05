@@ -167,6 +167,13 @@ private:
 	// are uploaded — which reboots the card anyway.
 	uint8_t variantCount_[kNumModes] = {};
 	uint8_t variantSlot_[kNumModes][kNumVariants] = {};
+
+	// Resolved sample pointers, also cached at init. ResolveSample() reads the
+	// user header through XIP — magic, version, size, offset — and note() called
+	// it per trigger. Four flash reads while core 1 is contending for the same
+	// bus is not cheap, and the answer only changes on upload, which reboots.
+	const int8_t *sampleData_[kNumModes][kNumVariants] = {};
+	uint32_t      sampleLen_[kNumModes][kNumVariants] = {};
 	bool  usePcm_ = false;
 };
 
