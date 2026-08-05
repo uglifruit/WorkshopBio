@@ -910,23 +910,24 @@ void __not_in_flash_func(CicadasEngine::tick)(const Ctrl &c, EngineOut &out)
 	// Cicadas are the shyest thing on the card: a loud room shuts them up.
 	// Audio In 1's envelope goes straight into fatigue, so the field thins as
 	// the rest of the patch gets busy and fills back in when it quietens.
-	// /4000, not /40. This was tuned against a value that was ALWAYS ZERO - the
-	// envelope was never published across the cores - so it had never once been
-	// heard. At /40 the accrual beats the per-insect recovery decay by two orders
-	// of magnitude, so any signal at all pinned fatigue at maximum within a
-	// quarter second: the field would have muted outright rather than thinned.
+	// A loud room shuts the cicadas up. This scales the call rate DIRECTLY rather
+	// than feeding fatigue_, which is where two earlier attempts went wrong.
 	//
-	// Fatigue settles where accrual balances recovery (f = add << recover_[i]),
-	// so at /4000 a full-scale input lands between 0.50 and 1.00 depending on
-	// each insect's own recovery shift. The field thins UNEVENLY, which is the
-	// point - the shy ones drop out first and the field recedes rather than
-	// switching off.
-	if (c.loudness > 0)
-		for (int i = 0; i < swarm; i++)
-		{
-			fatigue_[i] += mul_q16(c.loudness, kQ16One / 4000);
-			if (fatigue_[i] > kQ16One) fatigue_[i] = kQ16One;
-		}
+	// Fatigue is the wrong lever for it. It is driven far harder by calling
+	// (0.25 per call) and by ambient field drive (~0.0017/tick) than any loudness
+	// term can be without dominating, AND it caps out: `tired` bottoms at 0.25,
+	// so even a saturated fatigue only quarters the rate. Every divisor is
+	// therefore either inaudible or pinned - /40 pinned it within a quarter
+	// second, /4000 sat an order of magnitude below the ambient drive and was
+	// inaudible. There was no good value between, because the mechanism is a
+	// cliff rather than a control.
+	//
+	// Scaled here instead, alongside the startle, where it is proportional and
+	// can take the field all the way down. Half authority: a full-scale input
+	// halves the call rate, which recedes clearly without silencing a mode whose
+	// whole character is the drone.
+	int32_t hush = kQ16One;
+	if (c.loudness > 0) hush = kQ16One - (c.loudness >> 1);
 
 	// Knob Main = COUPLING DEPTH, and it scales both halves of the feedback loop
 	// at once: how much the field speeds insects up, and how much being in a
@@ -975,6 +976,8 @@ void __not_in_flash_func(CicadasEngine::tick)(const Ctrl &c, EngineOut &out)
 		// A startle multiplies on top, and unlike fatigue it goes all the way to
 		// zero - a footstep stops the field, it does not merely tire it.
 		if (startle_ > 0) tired = mul_q16(tired, kQ16One - startle_);
+		// Audio In 1's loudness does the same, gently and continuously.
+		if (hush < kQ16One) tired = mul_q16(tired, hush);
 		// Its own natural rate, then scaled by how tired it is. The per-insect
 		// tempo is what stops the twelve locking into unison.
 		int32_t myHz = mul_q16(mul_q16(hz_q8, tempo_[i]), tired);
