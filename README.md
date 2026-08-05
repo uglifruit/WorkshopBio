@@ -28,9 +28,16 @@ Runs on a Music Thing Modular Workshop System Computer. Built on the RP2040 with
 > they claim — panning no longer collapses eight variants to four, and Meteors
 > stops playing its first three swooshes twice as often as the rest.
 >
-> Still to come in **v1.2.0**: alt boot replaces its granular texture with a
-> drone bank driven by each agent's engine state. The audio-reactive inputs
-> remain untested against real signal levels.
+> **v1.2.0** — alt boot is now **TUNED**: the same one-shot voices as Rhythm, but
+> played at their recorded pitch with no per-animal or per-hit detuning, so
+> uploaded notes gallop or drip instead of being smeared across ±3 semitones. Its
+> Summed routing puts **1 V/oct on CV 2** telling you which round-robin slot just
+> fired. The granular renderer is gone.
+>
+> The browser editor now maps a **pool** of uploaded files onto slots, so one
+> recording can be reused across ecosystems without being sent twice.
+>
+> The audio-reactive inputs remain untested against real signal levels.
 >
 > Why the card is the way it is — including the things that were wrong first — is
 > in [docs/DEVLOG.md](docs/DEVLOG.md).
@@ -77,7 +84,7 @@ continuously. `python tools/simulate.py gaits` verifies the footfalls biomechani
 | **Knob Main** | **The Physics** — the fundamental law of the current ecosystem (Gait & tempo · Contagion · Decoupling · Downpour · Debris density) |
 | **Knob X** | **Population** — how many agents are alive: **horses in the herd**, birds in the flock, frogs in the pond, buckets on the leaf, meteors in the sky, insects in the field |
 | **Knob Y** | **Chaos / Humanize** — per-mode randomness and spread (timing jitter, spark rate, frequency spread, threshold variance, LFO wander) |
-| **Switch Down** (momentary) | **Tap to cycle** the ecosystem. **Hold at power-on** to boot **Drone** mode instead of Rhythm. |
+| **Switch Down** (momentary) | **Tap to cycle** the ecosystem. **Hold** for two seconds to hand the card to USB, hold again to return to playing. **Hold at power-on** to boot **Tuned** mode instead of Rhythm. |
 | **Switch Up** | Routing: **Discrete** |
 | **Switch Middle** | Routing: **Summed / CV** |
 
@@ -143,9 +150,14 @@ physical trigger.
 **LEDs** — one LED per ecosystem. The active mode's LED sits at a dim "you are here"
 glow and flares to full on every trigger, so one light carries both meanings.
 
+Both tables above describe the **Rhythm** boot. Tuned routes differently — see
+[Two instruments](#two-instruments-rhythm-and-tuned).
+
 ## Voices
 
-**Standard boot — synthesized.** Each mode has its own DSP timbre, built around whatever
+**The fallback — synthesized.** Recordings are the normal case; this is what plays if a
+card is built with no PCM baked in and nothing uploaded. Each mode has its own DSP
+timbre, built around whatever
 detail actually identifies the sound: hooves get a pitch-dropping body *plus a sharp
 band-passed noise transient* for shoe-on-stone; honks are a saw whose filter opens at the
 attack for that nasal kink; ribbits are Karplus-Strong; **drips rise in pitch as they
@@ -163,7 +175,7 @@ Every trigger picks a variant, and the variant *means* something:
 | **Geese** | 8 | Birds of different size |
 | **Frogs** | 8 | Species in the chorus |
 | **Rain** | 8 | Drip sizes |
-| **Meteors** | 8 | Distances |
+| **Meteors** | 5 | Distances — the baked library ships five swooshes, not eight |
 | **Cicadas** | 8 | Insects, tightly spread — a real field is fairly uniform |
 
 Everything except Horses picks at random with a **no-immediate-repeat** rule, so you never
@@ -184,36 +196,43 @@ Panning comes from the ecosystem, not from a knob:
   birds occupy twelve positions and a cascade sweeps across the field.
 - **Random** (Rain, Meteors) — each hit lands somewhere new, because each is a new object.
 
-## Two instruments: Rhythm and Drone
+## Two instruments: Rhythm and Tuned
 
-Hold the momentary switch **Down at power-on** to boot **DRONE** instead of the normal
+Hold the momentary switch **Down at power-on** to boot **TUNED** instead of the normal
 **RHYTHM** card. On power-up the LEDs announce which you got: Rhythm lights the left
-column, Drone the right.
+column, Tuned the right.
 
-**Rhythm** fires the recordings as discrete one-shots — one animal per trigger.
+Both play the same engines, the same recordings and the same one-shot voices. The
+difference is **pitch**.
 
-**Drone** granulates the *same* recordings into continuous texture. Each voice keeps up
-to eight overlapping grains running, started at random points inside the samples and
-played back stretched, so a one-shot becomes a sustained layer. The engines drive grain
-**density** and **spread** rather than pitch: Cicadas becomes a continuous field, Frogs a
-whole pond at night, Rain a steady downpour, Horses a herd passing on a road. Knob Y
-widens the pitch spread across grains, from a recognisable layer out to a smeared cloud.
+**Rhythm** humanises every hit. Each agent carries a fixed rate offset — four
+different-sized bodies — and every trigger adds a random detune on top. That is what
+stops four hooves sounding like one sample fired four times, and what stops two
+overlapping honks fusing into a single doubled sound.
 
-There are no oscillators in Drone — it is your recordings, sustained.
+**Tuned** switches both off. Samples play at their recorded pitch, every time. On
+animal recordings that is a subtle tightening; on *pitched* material it is the whole
+point — the detuning that flatters a goose spreads a struck note across ±3 semitones,
+randomly, hit to hit. Upload notes, drips or hits and the ecosystems become rhythm
+generators for them: a gallop of plucks, rain made of woodblocks, a Kuramoto chorus
+that stays in tune.
 
-**Drone's outputs** pair each gate with the density of the texture it came from, so the
-audio and control outs describe the same thing:
+**Tuned's outputs** are the same triggers, with the CV outs describing the ecosystem
+rather than firing blips:
 
 | | Switch Up | Switch Middle |
 |---|---|---|
-| **Pulse Out 1** | All activity | Voice 1 |
-| **Pulse Out 2** | — | Voice 2 |
-| **CV Out 1** | Voice 1 density | Voice 1 density |
-| **CV Out 2** | Whole-ecosystem state | Voice 2 density |
+| **Pulse Out 1** | Agent 1 | All agents |
+| **Pulse Out 2** | Agent 2 | Pulse 1 **÷ 4** |
+| **CV Out 1** | Agent 1 density | Overall density |
+| **CV Out 2** | Agent 2 density | **1 V/oct — which sample fired** |
 
-The CV outs are always continuous in Drone — it never fires CV trigger blips. Patch the
-audio to a reverb and the gates to a drum module and one ecosystem drives both the pad
-and the rhythm.
+That last one is the useful one. Each round-robin slot maps to a semitone (slot 1 = 0 V,
+slot 2 = 1/12 V, and so on), stepped rather than slewed, so patching CV 2 to an
+oscillator's pitch input gives you a melody whose notes follow whichever recording the
+ecosystem chose. Pair it with Pulse Out 1 as the gate.
+
+The CV outs are always continuous in Tuned — it never fires CV trigger blips.
 
 ## Replacing samples without a rebuild
 

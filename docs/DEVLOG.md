@@ -929,6 +929,115 @@ and it belongs outside the card.
 
 ---
 
+## v1.2.0 — the alt boot stops being a different synth
+
+Drone was proposed twice and rejected twice. The plan going in was a bank of four
+oscillators whose pitch and level followed each agent's engine state. What came
+back was a much better brief:
+
+> *I think I just want them as they are in the rhythm side, but without the pitch
+> modulation from the actual rr samples. I can see an instance where I might want
+> to upload (say) notes, and have them 'gallop' like hooves. Or drip like rain.*
+
+That is a smaller change and a stronger idea. The engines are already good at
+generating organic rhythm; the thing stopping them being *usable* on pitched
+material was never the voices, it was two deliberate detunings:
+
+- **`kPcmAgentSpread`** — a fixed per-agent rate offset. On animals that is four
+  different-sized bodies. On a tuned sample it is four permanently out-of-tune
+  copies.
+- **`kPcmPerHit`** — random detune per event. On honks it stops two overlapping
+  calls fusing into one doubled sound. On a struck note it is just wobble.
+
+Measured worst case: Meteors **±2.9 semitones**, Frogs ±2.2, Geese ±1.6 — audibly
+out of tune, and randomly so from hit to hit. Both are gated off by a `tuned_`
+flag, and the alt boot becomes the same instrument playing honestly.
+
+So the boot switch now means something coherent: **Rhythm is an ecosystem, Tuned
+is an instrument.**
+
+### The routing, and the one output worth patching first
+
+Specified directly rather than designed by me:
+
+| | Switch Up | Switch Middle |
+|---|---|---|
+| **Pulse 1** | Agent 1 | Any agent fired |
+| **Pulse 2** | Agent 2 | Pulse 1 ÷ 4 |
+| **CV 1** | Agent 1 density | Overall density |
+| **CV 2** | Agent 2 density | **1 V/oct — which sample fired** |
+
+CV 2 is the interesting one: each round-robin slot maps to a semitone, so an
+external oscillator plays a melody chosen by whichever recording the ecosystem
+picked. It needed a new path — the CV outs are slewed, and **a pitch CV must step,
+not glide**, or a sequence becomes portamento smear. One bit in `gXC.cvStep`
+bypasses the smoother for that output only.
+
+Verified the mapping arithmetic against the DAC calibration rather than trusting
+it: within 0.1 mV of a true semitone across all eight slots.
+
+### What deleting Drone bought
+
+The granular renderer went: `droneUpdate`, `droneRender`, `Grain`, `DroneVoice`
+and `droneControlTick()` — **308 lines**, and with them the last engine still
+running its physics inline on core 0. The mode that was 130% over budget stopped
+existing rather than being optimised.
+
+---
+
+## The editor round trip: three bugs that all looked like display faults
+
+Uploading worked. Reading back what had been uploaded did not, and it took four
+rounds of hardware reports to see why, because every symptom pointed at the page
+while two of the three causes were elsewhere.
+
+**Cicadas played hooves.** Samples uploaded to Horses and Rain also came out of
+Cicadas, which had never been touched. My first instinct was a display shift —
+the panel said "Cicadas 3 = built-in Horses 3" and Cicadas is mode 5, Horses 0.
+Wrong: *"No — they sound like horses too."* The card really was holding it.
+
+A **baked reference** points a slot at a built-in recording. In a mode with no
+uploads it buys nothing, since an empty slot already plays its own built-in — so
+the editor skipped sending them. But the test only caught a reference pointing at
+its **own** mode and variant, and a cross-mode one went straight through. Then it
+became self-sustaining: the page seeds its mapping from the card, so the bad
+reference came back on every reload and was re-sent by the next sync. **It
+outlived the firmware that created it**, which is exactly why it kept looking
+like a display bug I had already fixed.
+
+Fixed on both sides, and enforced on the card at `UP_END` rather than per message
+— only the finished header shows whether a mode has real audio, since references
+can arrive before the uploads they sit beside. That makes the next sync *repair* a
+card already carrying them.
+
+**A sample in a high slot vanished but still played.** Slots 1–4 and 5–8 come
+back as two separate replies, because all eight never fitted the USB transmit
+buffer. The request loop read one reply per request and skipped anything that was
+not a `SLOTDET` — so a stray message was consumed **in place of** a real reply,
+shifting every later reply by one and leaving the last request with nothing.
+
+The tell was mine to miss and someone else's to spot: *"Might not have been 5.
+Have just re-tried with slot 2 in geese, that DID work."* Slot 2 is the first
+reply, the high slot the second.
+
+Worth recording that my previous fix caused this. Keying replies on the mode the
+*card* reports (rather than the one requested) stopped data being **mis-filed** —
+but it could not conjure back a reply that was never read. **It converted a wrong
+answer into a missing one.** I fixed the labelling without checking that the loop
+consumed replies correctly, and the symptom moved instead of going away.
+
+And once Geese's second reply was lost, Geese looked upload-free, so every slot
+fell back to its built-in. **The page was faithful to what it had been told; it
+had been told wrong.** A display that derives everything from one query is only
+ever as honest as that query.
+
+**"Update mapping" was greyed out until you had done an upload** — which is
+precisely the case where you have not. `connect()` enabled every other button but
+that one; the sole place it was enabled was the `finally` of `sync()`. The button
+whose whole purpose is to avoid an upload required one first.
+
+---
+
 ## Standing notes
 
 - **`tools/simulate.py` duplicates the C++ constants.** It will drift if
@@ -936,17 +1045,16 @@ and it belongs outside the card.
   worse than none.
 - **No host C++ compiler on this machine**, which is why the harness is a Python
   model rather than `tools/simulate.cpp` compiling the real sources.
-- **CPU timing is measured, and every mode is over budget** — see the section
-  above. The old claim here ("~55 cycles/sample amortised") measured the wrong
-  quantity and has been removed.
-- **The card currently drops samples in all six modes.** Cicadas is worst at 3×
-  budget, Horses overruns most often at 11030 per read. This is a known, measured
-  defect, not a suspicion.
-- **Drone mode has now been heard, and it was the worst thing on the card** —
-  17546 cycles in `droneRender()`, 674% of budget. Fixed (see above), but the fix
-  is not yet auditioned, and the grain rates and stretch factors are still
-  calculated rather than tuned by ear. The audio-reactive thresholds remain
-  untested against real signal levels.
+- **CPU timing is measured, and the card now runs inside its budget** — worst mode
+  70% with zero overruns, after the physics moved to core 1 and the clock went to
+  192 MHz. The old claim here ("~55 cycles/sample amortised") measured the wrong
+  quantity and has been removed. **Never quote an amortised figure as headroom:**
+  `controlTick()` runs inline in the audio interrupt, so the sample where the
+  physics fire must still complete in one 20.83 µs slot.
+- **Drone is gone.** It was the worst thing on the card at 674% of budget, and
+  rather than optimise it the alt boot became Tuned — the same voices, undetuned.
+  308 lines deleted. The audio-reactive thresholds remain untested against real
+  signal levels.
 - **Measure the mode you are asking about.** The six-mode sweep was Rhythm-only
   and said nothing about Drone, where the real defect was — and the tell came
   from someone listening, not from the numbers.
@@ -964,7 +1072,22 @@ and it belongs outside the card.
 - **The card can only report what is still alive.** USB cannot describe a failure
   that stops USB, and the LEDs cannot describe one that stops `ProcessSample()`.
   Pick the out-of-band channel that survives the thing being diagnosed.
+- **A wrong display and a missing one are different bugs.** Twice now a fix to
+  how data was *labelled* left a hole in how it was *read*, and the symptom moved
+  rather than going away. When a report changes shape after a fix, suspect the
+  fix.
+- **State that round-trips through storage outlives the code that wrote it.** A
+  bad baked reference survived the firmware that created it, because the editor
+  seeds itself from the card and re-sends what it finds. Anything persisted needs
+  validating on the way *in*, not only on the way out — which is why that check
+  now runs on the card at commit, where a buggy client cannot skip it.
+- **A display derived from one query is only as honest as that query.** Losing
+  half of one reply made a mode look upload-free, and the page then confidently
+  showed built-ins for slots the card was playing samples from. It was not
+  guessing; it had been told wrong.
 - **Listening beats simulation, and simulation beats reading the code.** Every
   fix in this log after the first release came from someone playing the card, and
   more than one of my confident first guesses was wrong until I measured
-  something instead of reasoning about it.
+  something instead of reasoning about it. This round the decisive corrections
+  were all one-line hardware reports — *"they sound like horses too"*, *"slot 2
+  did work"* — each of which killed a theory I had spent a tool call defending.

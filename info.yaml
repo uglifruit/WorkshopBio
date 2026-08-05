@@ -3,7 +3,7 @@ Name: BioMimicry
 short-description: Six physics engines generating organic, semi-random triggers, CV and audio
 Language: C++ (ComputerCard)
 Creator: Andy Jenkinson (uglifruit)
-Version: "1.1.0"
+Version: "1.2.0"
 Status: Released
 License: CC-BY-4.0
 repository: https://github.com/uglifruit/WorkshopBio
@@ -19,7 +19,7 @@ contact:
 # The build computes the sha256 for repo-hosted firmware, so none is given here.
 uf2:
   - path: UF2/biomimicry.uf2
-    name: BioMimicry 1.1.0
+    name: BioMimicry 1.2.0
 
 tags:
   - generative
@@ -28,7 +28,6 @@ tags:
   - triggers
   - drums
   - swarm
-  - granular
   - organic
   - sample-player
 
@@ -52,8 +51,11 @@ summary: |
   the round robins are the four hooves, so a gait sounds like an animal rather
   than a drum machine.<br><br>
 
-  Hold the momentary switch at power-on to boot DRONE, which granulates the same
-  recordings into continuous texture instead of firing them as one-shots.<br><br>
+  Hold the momentary switch at power-on to boot TUNED, which plays the same
+  recordings at their recorded pitch with no per-animal or per-hit detuning - so
+  uploaded notes, drips or hits can be galloped, dripped or swarmed in tune. Its
+  Summed routing puts 1V/oct on CV 2 saying which round robin just fired, so the
+  ecosystem can play a melody on an external oscillator.<br><br>
 
   Samples can be replaced from a browser over USB.
 
@@ -133,7 +135,7 @@ controls:
         description: How many agents are alive, 1 to 4. Horses always keep all four hooves - the knob adds whole animals to the herd. In the swarm modes each output channel carries three members, so a full population is twelve birds, frogs, meteors or insects.
       y:
         name: Chaos
-        description: Per-mode randomness and spread - per-hoof timing jitter (Horses), spontaneous spark rate (Geese), natural-frequency spread (Frogs), leak rate (Rain), density wander (Meteors), rate spread across the field (Cicadas). In Drone boot, the pitch spread across grains.
+        description: Per-mode randomness and spread - per-hoof timing jitter (Horses), spontaneous spark rate (Geese), natural-frequency spread (Frogs), leak rate (Rain), density wander (Meteors), rate spread across the field (Cicadas).
   leds:
     -
       display: list
@@ -154,10 +156,13 @@ host:
     Out 2 when two or more agents hit at once, agent 1's continuous internal state
     on CV Out 1, and the whole-ecosystem state on CV Out 2.
 
-    In DRONE boot the gates pair with the density of the texture they came from.
-    Switch Up puts all activity on Pulse Out 1 with voice 1's density on CV Out 1;
-    Switch Middle puts voices 1 and 2 on the two pulse outs with their densities
-    on the two CV outs. The CV outs are always continuous in Drone.
+    In TUNED boot the CV outs are always continuous - it never fires CV trigger
+    blips. Switch Up gives agents 1 and 2 a pulse out each with their own smoothed
+    densities on the CV outs. Switch Middle puts every trigger on Pulse Out 1,
+    that divided by four on Pulse Out 2, overall density on CV Out 1, and on CV
+    Out 2 a 1V/oct pitch saying WHICH round-robin slot just fired - one semitone
+    per slot, stepped rather than slewed, so it drives an external oscillator as a
+    melody with Pulse Out 1 as the gate.
 
     UNDER THE HOOD
 
