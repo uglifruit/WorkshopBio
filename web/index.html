@@ -50,6 +50,13 @@
   /* Already on the card, nothing staged for it: solid but muted, so you can see
      what you are adding to rather than guessing. */
   .slot.oncard { border-style:solid; border-color:var(--dim); color:var(--text); }
+  .slot { position:relative; }
+  .slot .x {
+    position:absolute; top:1px; right:4px; font-size:.9rem; line-height:1;
+    color:var(--dim); display:none;
+  }
+  .slot.filled .x { display:block; }
+  .slot .x:hover { color:var(--err); }
   .slot .n { display:block; font-weight:700; color:var(--text); }
   .slot .len { display:block; font-size:.72rem; color:var(--dim); }
   progress { width:100%; height:8px; margin-top:1rem; }
@@ -406,8 +413,9 @@ async function upload() {
   // "the card is full" would send people deleting samples they did not need to.
   if (state.info && total > state.info.cap) {
     setStatus(`${kb(total)} is more than the ${kb(state.info.cap)} the card can ` +
-              `take in ONE upload. It has room — send some modes now and the ` +
-              `rest in a second pass; uploads add to what is already there.`, "err");
+              `take in ONE upload — ${kb(total - state.info.cap)} too much. ` +
+              `Click the × on a slot to drop it, then upload the rest in a ` +
+              `second pass; uploads add to what is already there.`, "err");
     return;
   }
   if (state.info && state.info.total) {
@@ -622,7 +630,17 @@ function build() {
       inp.type = "file"; inp.accept = "audio/*,.wav"; inp.hidden = true;
       inp.onchange = () => inp.files[0] && load(mi, v, inp.files[0], s);
       s.appendChild(inp);
-      s.onclick = (e) => { if (e.target !== inp) inp.click(); };
+      // Click the little x to unstage. Without this a file could only be
+      // ADDED — going over the per-upload cap meant reloading the page and
+      // starting again, which is a bad answer to "I picked one too many".
+      const clr = document.createElement("span");
+      clr.className = "x";
+      clr.textContent = "×";
+      clr.title = "Remove this file";
+      clr.onclick = (e) => { e.stopPropagation(); unstage(mi, v, s); };
+      s.appendChild(clr);
+
+      s.onclick = (e) => { if (e.target !== inp && e.target !== clr) inp.click(); };
       s.ondragover = (e) => { e.preventDefault(); s.classList.add("drag"); };
       s.ondragleave = () => s.classList.remove("drag");
       s.ondrop = (e) => {
@@ -756,6 +774,18 @@ function updateUsage() {
     el.innerHTML = cardLine + (stagedLine ? "<br>" + stagedLine : "");
     el.style.color = "";
   });
+}
+
+/// Drop a staged file. The card is untouched — this only clears what this page
+/// was about to send.
+function unstage(mode, variant, el) {
+  delete state.slots[`${mode}:${variant}`];
+  el.classList.remove("filled");
+  const len = el.querySelector(".len");
+  if (len) len.textContent = "empty";
+  const inp = el.querySelector("input");
+  if (inp) inp.value = "";        // so the same file can be picked again
+  updateUsage();
 }
 
 async function load(mode, variant, file, el) {
