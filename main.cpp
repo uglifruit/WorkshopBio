@@ -817,11 +817,25 @@ public:
 			if (a < 0) a = -a;
 			// Fast attack, slow release: an envelope that tracks how alive the
 			// room is rather than the waveform itself.
-			if (a > loudness_) loudness_ = slew(loudness_, a << 4, 3);
-			else               loudness_ = slew(loudness_, a << 4, 9);
+			// << 5, not << 4. Audio in is signed 12-bit, so |a| tops out at 2048
+			// and a << 4 could only ever reach half of Q16 - a full-scale signal
+			// read as "half loud" and nothing could reach the top of the range.
+			if (a > loudness_) loudness_ = slew(loudness_, a << 5, 3);
+			else               loudness_ = slew(loudness_, a << 5, 9);
 			if (loudness_ > kQ16One) loudness_ = kQ16One;
 		}
 		else loudness_ = 0;
+
+		// PUBLISH IT. The engines read gXC.loudness, and until this line nothing
+		// ever wrote it - so Audio In 1 did nothing at all in every mode, however
+		// hot the signal. listen() stayed on core 0 when the physics moved to
+		// core 1 (Stage 3), and the value was simply never carried across; the
+		// field was declared in crosscore.h with core 0 named as its writer, and
+		// the writer was never written.
+		//
+		// Audio In 2 survived the same split because it publishes an edge counter
+		// inline below, which is why Disturb worked and Loudness did not.
+		gXC.loudness = loudness_;
 
 		if (Connected(Input::Audio2))
 		{

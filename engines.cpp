@@ -321,7 +321,14 @@ void __not_in_flash_func(GeeseEngine::tick)(const Ctrl &c, EngineOut &out)
 
 	// Geese are the opposite of shy: a loud room agitates them, raising the
 	// chance any bird sets the flock off. The card answers back to the patch.
-	if (c.loudness > 0) spark += mul_q16(c.loudness, 24);
+	//
+	// 48 against a baseline of 2-18 at full population: a loud patch multiplies
+	// the spontaneous rate several times over, and since every spark can ignite
+	// a cascade the audible effect is larger than the number suggests. Like the
+	// Cicadas figure this had never actually been heard - nothing published the
+	// envelope across the cores until now - so it is a first tuning, not a
+	// retune.
+	if (c.loudness > 0) spark += mul_q16(c.loudness, 48);
 
 	// Contagion strength from Knob Main. Mildly shaped (x^1.5-ish via a blend of
 	// linear and squared) so the knob keeps resolution down low without going
@@ -903,10 +910,21 @@ void __not_in_flash_func(CicadasEngine::tick)(const Ctrl &c, EngineOut &out)
 	// Cicadas are the shyest thing on the card: a loud room shuts them up.
 	// Audio In 1's envelope goes straight into fatigue, so the field thins as
 	// the rest of the patch gets busy and fills back in when it quietens.
+	// /4000, not /40. This was tuned against a value that was ALWAYS ZERO - the
+	// envelope was never published across the cores - so it had never once been
+	// heard. At /40 the accrual beats the per-insect recovery decay by two orders
+	// of magnitude, so any signal at all pinned fatigue at maximum within a
+	// quarter second: the field would have muted outright rather than thinned.
+	//
+	// Fatigue settles where accrual balances recovery (f = add << recover_[i]),
+	// so at /4000 a full-scale input lands between 0.50 and 1.00 depending on
+	// each insect's own recovery shift. The field thins UNEVENLY, which is the
+	// point - the shy ones drop out first and the field recedes rather than
+	// switching off.
 	if (c.loudness > 0)
 		for (int i = 0; i < swarm; i++)
 		{
-			fatigue_[i] += mul_q16(c.loudness, kQ16One / 40);
+			fatigue_[i] += mul_q16(c.loudness, kQ16One / 4000);
 			if (fatigue_[i] > kQ16One) fatigue_[i] = kQ16One;
 		}
 
