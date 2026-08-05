@@ -64,48 +64,48 @@ panel:
       type: audio
       description: An envelope follower on whatever you patch in, so the ecosystem hears the rest of your rack. A loud room agitates the geese into honking and shuts the cicadas up. Inactive when nothing is patched.
     - id: AudioIn2
-      name: Disturbance
+      name: Disturb
       type: audio
       description: Transient-sensitive rather than level-sensitive, because sudden movement is what alarms an animal rather than steady noise. A sharp attack counts as a Spook. Inactive when nothing is patched.
     - id: CVIn1
-      name: Physics Modulation
+      name: Physics Mod
       type: cv
       description: Summed with Knob Main to modulate the current ecosystem's physics variable
     - id: CVIn2
-      name: Population Modulation
+      name: Population Mod
       type: cv
       description: Summed with Knob X to modulate how many agents are active
     - id: PulseIn1
-      name: The Spook
+      name: Spook
       type: pulse
       description: Disrupts the environment. Horses - the herd startles into step. Geese - a guaranteed cascade. Frogs - a splash that scrambles every phase and destroys sync. Rain - a wind gust dumping energy into all the buckets. Meteors - a bolide spiking density to maximum. Cicadas - a footstep in the grass, silencing the field before it creeps back in.
     - id: PulseIn2
-      name: The Clock
+      name: Clock
       type: pulse
       description: An external tempo the ecosystem entrains to rather than obeys. Frogs treat it as a phantom oscillator and couple to its phase at whatever strength Knob Main sets, so the chorus dials from locked-to-clock to completely indifferent. Horses lock their stride, Geese lean honks toward the beat, Rain tops up the buckets, Meteors swell the debris field. Stops mattering about 3 seconds after the clock stops.
   outputs:
     - id: AudioOut1
-      name: Audio Left
+      name: Audio L
       type: audio
       description: Agents rendered and placed in the stereo field by the mode's own logic - a stable image for Horses, fixed spots for the flock modes, a new position per hit for Rain and Meteors
     - id: AudioOut2
-      name: Audio Right
+      name: Audio R
       type: audio
       description: The right channel of the same stereo image
     - id: CVOut1
-      name: Agent 3 Trigger / State
+      name: Trig3 / State
       type: cv
       description: A trigger or a continuous control voltage depending on the switch position - see the switch sections
     - id: CVOut2
-      name: Agent 4 Trigger / Global State
+      name: Trig4 / State
       type: cv
       description: A trigger or a continuous control voltage depending on the switch position - see the switch sections
     - id: PulseOut1
-      name: Agent 1 / All Agents
+      name: Trig1 / All Trigs
       type: pulse
       description: Individual or summed agent triggers depending on the switch position
     - id: PulseOut2
-      name: Agent 2 / Accent
+      name: Trig2 / Accent
       type: pulse
       description: Individual agent triggers or an accent gate depending on the switch position
 
@@ -115,24 +115,24 @@ controls:
       name: Discrete Routing
       description: The four agents route individually - agents 1 and 2 to the pulse outs, agents 3 and 4 as calibrated 5V trigger blips on the CV outs, since they have no pulse out of their own
     middle:
-      name: Summed / CV Routing
+      name: Summed Routing
       description: All active agents OR'd onto Pulse Out 1, an accent on Pulse Out 2, and continuous internal-state CV on both CV outs
     down:
-      name: Cycle Ecosystem
-      description: Momentary. HOLD at power-on to boot DRONE mode instead of Rhythm - the LEDs announce which you got, Rhythm lighting the left column and Drone the right
+      name: WebUI mode/Alt Boot
+      description: HOLD for WebUI mode. HOLD at power-on to boot DRONE mode instead of Rhythm - the LEDs announce which you got, Rhythm lighting the left column and Drone the right
     tap:
-      name: Cycle Ecosystem
+      name: Ecosystem
       description: Briefly press and release to move to the next ecosystem - Horses, Geese, Frogs, Rain, Meteors, Cicadas
   knobs:
     -
       main:
-        name: The Physics
+        name: Physics
         description: The fundamental law of the current ecosystem. Horses - gait and stride rate, sweeping walk, trot, canter and gallop with each gait in its own tempo band. Geese - contagion, from birds ignoring each other to one honk setting off the flock. Frogs - decoupling, from locked metronomic sync to total chaos. Rain - downpour, from silence to stuttering torrents. Meteors - debris density. Cicadas - coupling depth, from a steady drone to deep irregular surges.
       x:
         name: Population
         description: How many agents are alive, 1 to 4. Horses always keep all four hooves - the knob adds whole animals to the herd. In the swarm modes each output channel carries three members, so a full population is twelve birds, frogs, meteors or insects.
       y:
-        name: Chaos / Humanize
+        name: Chaos
         description: Per-mode randomness and spread - per-hoof timing jitter (Horses), spontaneous spark rate (Geese), natural-frequency spread (Frogs), leak rate (Rain), density wander (Meteors), rate spread across the field (Cicadas). In Drone boot, the pitch spread across grains.
   leds:
     -
