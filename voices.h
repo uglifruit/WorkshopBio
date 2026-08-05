@@ -57,7 +57,23 @@ struct Voice
 	uint32_t pcmLen;
 	uint32_t pcmPos;     // Q16 fractional position
 	uint32_t pcmInc;     // Q16 rate
+
+	// Which agent this voice is currently sounding for, or -1 when free. Voices
+	// are a POOL now rather than one-per-agent: a flock of twelve folded onto
+	// four outputs retriggers the same agent long before its last sample has
+	// finished, and with one voice each that cut the sound off mid-body.
+	int8_t   agent;
+
+	// Release ramp, Q16. A stolen or restarted voice fades over a few ms instead
+	// of jumping to the new sample's first byte — that discontinuity was the
+	// audible "truncation" on overlapping hits.
+	int32_t  release;
 };
+
+/// Voices in the pool. Two per agent: the swarm modes fold twelve members onto
+/// four outputs, so one agent is routinely retriggered while its previous hit is
+/// still sounding — Geese can retrigger at ~56ms against samples of 137-222ms.
+constexpr int kNumVoices = kNumAgents * 2;
 
 /// Grains per agent in Drone boot. Must be at least as large as the heaviest
 /// overlap any mode asks for, or the round-robin steals grains that are still
@@ -135,7 +151,11 @@ private:
 	/// field, both according to the mode's own logic.
 	void selectVariantAndPan(Voice &v, int agent, Mode m, uint8_t member);
 
-	Voice v_[kNumAgents];
+	// Twice as many voices as agents, so an overlapping hit usually finds a free
+	// one rather than cutting a live one short. ~332 bytes each against ~80KB
+	// free, so the cost is RAM we have; the constraint was always CPU, and the
+	// core-1 split left core 0 with headroom (Total 2209 of 2604).
+	Voice v_[kNumVoices];
 	DroneVoice d_[kNumAgents];
 	uint8_t lastVariant_[kNumAgents];  // for no-immediate-repeat
 	uint32_t rng_ = 0x9E3779B9u;

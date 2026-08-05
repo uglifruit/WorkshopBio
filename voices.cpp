@@ -136,7 +136,8 @@ void VoiceBank::init(bool usePcm)
 		variantCount_[m] = static_cast<uint8_t>(n);
 	}
 
-	for (int i = 0; i < kNumAgents; i++)
+	// The voice POOL is larger than the agent count, so it gets its own loop.
+	for (int i = 0; i < kNumVoices; i++)
 	{
 		Voice &v = v_[i];
 		v.env = 0; v.phase = 0; v.phase2 = 0; v.inc = 0; v.inc2 = 0;
@@ -147,7 +148,13 @@ void VoiceBank::init(bool usePcm)
 		v.ksLen = 64; v.ksPos = 0;
 		for (int k = 0; k < 128; k++) v.ks[k] = 0;
 		v.pcm = nullptr; v.pcmLen = 0; v.pcmPos = 0; v.pcmInc = 65536;
-		setPan(v, 2 + i * 4);
+		v.agent = -1;              // free
+		v.release = kQ16One;
+		setPan(v, 2 + (i % kNumAgents) * 4);
+	}
+
+	for (int i = 0; i < kNumAgents; i++)
+	{
 		lastVariant_[i] = 0xFF;
 
 		DroneVoice &d = d_[i];
@@ -247,7 +254,30 @@ void __not_in_flash_func(VoiceBank::selectVariantAndPan)(Voice &v, int agent, Mo
 void __not_in_flash_func(VoiceBank::note)(int i, Mode m, int32_t accent, int32_t variation,
                      uint8_t member)
 {
-	Voice &v = v_[i];
+	// Pick a voice from the pool rather than using the agent index directly.
+	//
+	// Order of preference: a free voice, then the quietest sounding one. Taking
+	// the quietest means a steal lands on whatever is closest to finished, which
+	// is the least audible thing to interrupt — and the release ramp below hides
+	// what is left of it.
+	int slot = -1;
+	uint32_t mostPlayed = 0;
+	int oldestSlot = 0;
+	for (int k = 0; k < kNumVoices; k++)
+	{
+		if (v_[k].agent < 0) { slot = k; break; }
+		// Which sounding voice is closest to finished? For PCM that is simply
+		// the one furthest through its recording — no divide needed, since we
+		// only need to compare, not to normalise. Synth voices fall back to
+		// their envelope, inverted so "most decayed" sorts the same way.
+		uint32_t played = v_[k].pcm ? (v_[k].pcmPos >> 16)
+		                            : static_cast<uint32_t>(kQ16One - v_[k].env);
+		if (played >= mostPlayed) { mostPlayed = played; oldestSlot = k; }
+	}
+	if (slot < 0) slot = oldestSlot;
+
+	Voice &v = v_[slot];
+	v.agent = static_cast<int8_t>(i);
 	int mi = static_cast<int>(m);
 
 	v.mode = static_cast<uint8_t>(mi);
@@ -281,6 +311,13 @@ void __not_in_flash_func(VoiceBank::note)(int i, Mode m, int32_t accent, int32_t
 		v.pcm    = sr.data;
 		v.pcmLen = sr.len;
 		v.pcmPos = 0;
+
+		// Start the fade-in from silence. Recordings are trimmed to their attack
+		// so they begin at a non-zero amplitude, and starting one abruptly in a
+		// voice that was just cut off is a step discontinuity — a click. Two
+		// milliseconds is short enough to leave a hoof or a drip sounding sharp,
+		// and long enough to remove the edge.
+		v.release = 0;
 
 		// Playback rate. Everything used to play at exactly 1:1, so four horses
 		// were byte-identical and a flock of geese was one goose repeated.
@@ -552,10 +589,13 @@ void __not_in_flash_func(VoiceBank::render)(int active, int16_t &l, int16_t &r)
 {
 	int32_t accL = 0, accR = 0;
 
-	for (int i = 0; i < kNumAgents; i++)
+	for (int i = 0; i < kNumVoices; i++)
 	{
 		Voice &v = v_[i];
 		int32_t s = 0;
+
+		// Free voices cost one compare, which is what makes a pool affordable.
+		if (v.agent < 0) continue;
 
 		if (usePcm_)
 		{
@@ -573,6 +613,23 @@ void __not_in_flash_func(VoiceBank::render)(int active, int16_t &l, int16_t &r)
 				int32_t  b   = (idx + 1 < v.pcmLen) ? v.pcm[idx + 1] : 0;
 				s = (a + (((b - a) * mu) >> 16)) << 4;   // 8-bit -> 12-bit
 				v.pcmPos += v.pcmInc;
+
+				// Fade in over ~2ms. The PCM path had NO envelope at all: v.env
+				// was set by note() and never read here, so a sample played flat
+				// and a retrigger jumped straight to the new recording's first
+				// byte. That step is what was heard as truncation.
+				if (v.release < kQ16One)
+				{
+					v.release += kQ16One / 96;     // 96 samples = 2ms at 48kHz
+					if (v.release > kQ16One) v.release = kQ16One;
+					s = mul_q16(s, v.release);
+				}
+			}
+			else
+			{
+				// Finished: hand the voice back to the pool.
+				v.agent = -1;
+				v.pcm = nullptr;
 			}
 		}
 		else if (v.env > 0)
@@ -677,8 +734,13 @@ void __not_in_flash_func(VoiceBank::render)(int active, int16_t &l, int16_t &r)
 			v.env = fast_exp_decay(v.env, v.decayShift);
 		}
 
+		// Below audibility (or a synth voice whose envelope already reached
+		// zero, which skips the branch above): return it to the pool so the next
+		// note can have it without a steal.
+		if (!usePcm_ && v.env < 64) { v.agent = -1; continue; }
+
 		// Silence agents outside the current population.
-		if (i >= active) continue;
+		if (v.agent >= active) continue;
 
 		accL += mul_q15(s, v.panL);
 		accR += mul_q15(s, v.panR);
