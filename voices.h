@@ -52,10 +52,18 @@ struct Voice
 	// place each trigger where its ecosystem would put it.
 	int32_t  panL, panR;
 
-	// PCM backend state
+	// PCM backend state.
+	//
+	// Position is split into WHOLE SAMPLES and a Q16 fraction rather than being
+	// one Q16 number. A single uint32 Q16 position tops out at 2^32/65536 =
+	// 65536 samples, i.e. 1.37 seconds — and meteors_4 (97493) and meteors_5
+	// (118596) are longer than that, so the position wrapped back to zero before
+	// it ever reached pcmLen. `idx < pcmLen` was then never false, the voice was
+	// never freed, and the swoosh looped forever, straight through mode changes.
 	const int8_t *pcm;
 	uint32_t pcmLen;
-	uint32_t pcmPos;     // Q16 fractional position
+	uint32_t pcmIdx;     // whole samples played
+	uint32_t pcmFrac;    // Q16 fraction within the current sample
 	uint32_t pcmInc;     // Q16 rate
 
 	// Which agent this voice is currently sounding for, or -1 when free. Voices

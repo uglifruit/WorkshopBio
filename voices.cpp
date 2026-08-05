@@ -156,7 +156,7 @@ void VoiceBank::init(bool usePcm)
 		v.decayShift = 10; v.mode = 0; v.variant = 0;
 		v.ksLen = 64; v.ksPos = 0;
 		for (int k = 0; k < 128; k++) v.ks[k] = 0;
-		v.pcm = nullptr; v.pcmLen = 0; v.pcmPos = 0; v.pcmInc = 65536;
+		v.pcm = nullptr; v.pcmLen = 0; v.pcmIdx = 0; v.pcmFrac = 0; v.pcmInc = 65536;
 		v.agent = -1;              // free
 		v.release = kQ16One;
 		setPan(v, 2 + (i % kNumAgents) * 4);
@@ -279,7 +279,7 @@ void __not_in_flash_func(VoiceBank::note)(int i, Mode m, int32_t accent, int32_t
 		// the one furthest through its recording — no divide needed, since we
 		// only need to compare, not to normalise. Synth voices fall back to
 		// their envelope, inverted so "most decayed" sorts the same way.
-		uint32_t played = v_[k].pcm ? (v_[k].pcmPos >> 16)
+		uint32_t played = v_[k].pcm ? v_[k].pcmIdx
 		                            : static_cast<uint32_t>(kQ16One - v_[k].env);
 		if (played >= mostPlayed) { mostPlayed = played; oldestSlot = k; }
 	}
@@ -320,7 +320,8 @@ void __not_in_flash_func(VoiceBank::note)(int i, Mode m, int32_t accent, int32_t
 		// which reads the user header through XIP on every single trigger.
 		v.pcm    = sampleData_[mi][v.variant];
 		v.pcmLen = sampleLen_[mi][v.variant];
-		v.pcmPos = 0;
+		v.pcmIdx = 0;
+		v.pcmFrac = 0;
 
 		// Start the fade-in from silence. Recordings are trimmed to their attack
 		// so they begin at a non-zero amplitude, and starting one abruptly in a
@@ -612,16 +613,22 @@ void __not_in_flash_func(VoiceBank::render)(int active, int16_t &l, int16_t &r)
 			// overflows 32 bits for anything longer than 65536 bytes (1.37s),
 			// which silently truncated the two longest meteor swooshes to under
 			// half their length.
-			uint32_t idx = v.pcmPos >> 16;
+			uint32_t idx = v.pcmIdx;
 			if (v.pcm && idx < v.pcmLen)
 			{
 				// 8-bit PCM, linear-interpolated so pitch-shifted playback
 				// doesn't alias badly.
-				int32_t  mu  = static_cast<int32_t>(v.pcmPos & 0xFFFF);
+				int32_t  mu  = static_cast<int32_t>(v.pcmFrac);
 				int32_t  a   = v.pcm[idx];
 				int32_t  b   = (idx + 1 < v.pcmLen) ? v.pcm[idx + 1] : 0;
 				s = (a + (((b - a) * mu) >> 16)) << 4;   // 8-bit -> 12-bit
-				v.pcmPos += v.pcmInc;
+
+				// Advance: carry the Q16 fraction into whole samples, so the
+				// index has the full 32-bit range instead of the 16 bits a
+				// combined Q16 position would leave it.
+				v.pcmFrac += v.pcmInc;
+				v.pcmIdx  += v.pcmFrac >> 16;
+				v.pcmFrac &= 0xFFFF;
 
 				// Fade in over ~2ms. The PCM path had NO envelope at all: v.env
 				// was set by note() and never read here, so a sample played flat
