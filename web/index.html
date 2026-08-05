@@ -174,6 +174,13 @@
     A sync that only changes the mapping sends no audio at all.
   </p>
   <p class="note">
+    Each slot can take one of your loaded files, one of the card's own
+    <strong>built-in</strong> recordings — from any ecosystem, so the stock hoof
+    can be a goose — or audio it is <strong>already holding</strong>, shown as
+    <em>Card #1</em> and so on. The card stores each recording once however many
+    slots use it, so reuse costs nothing.
+  </p>
+  <p class="note">
     Once any slot of a mode is set, that mode ignores its built-in recordings.
     <strong>Revert … to built-in</strong> on a mode hands it back; <strong>Revert
     to built-in</strong> above clears everything and reclaims the space. Each sync
@@ -190,7 +197,7 @@ const MFR = 0x7D;
 const MSG = {
   HELLO:0x01, INFO:0x02, UP_BEGIN:0x10, UP_SLOT:0x11, UP_CHUNK:0x12,
   UP_SLOTEND:0x13, UP_END:0x14, ACK:0x15, ERR:0x16, ERASE:0x20,
-  UP_ALIAS:0x17, UP_DROP:0x18, UP_BAKED:0x19,
+  UP_ALIAS:0x17, UP_DROP:0x18, UP_BAKED:0x19, UP_KEEP:0x1A,
   PLAY:0x21, CLEARMODE:0x22, SLOTS:0x23,
   SLOTINFO:0x24, SLOTDET:0x25,
   PROF_GET:0x30, PROF:0x31,
@@ -448,7 +455,16 @@ async function connect() {
           if (sz > 0) state.onCardSlots[`${m}:${v}`] = { off, sz };
         }
       }
+      // Seed the page's mapping FROM THE CARD, so a reload shows what is
+      // actually there. Without this every slot read "none" while the card still
+      // held audio - and since a sync is authoritative, syncing would then have
+      // DELETED it. Marked "k<off>" for keep: the sync re-points the slot at the
+      // same bytes rather than re-sending them.
+      for (const [key, { off }] of Object.entries(state.onCardSlots))
+        if (state.slots[key] === undefined) state.slots[key] = `k${off}`;
+
       renderOnCard();
+      refreshSelects();
       updateUsage();
     } else {
       setStatus("Connected, but the card did not identify itself.", "err");
@@ -491,7 +507,7 @@ async function upload() {
 
   // First slot using a given file CARRIES it; the rest alias that slot.
   const carrier = new Map();
-  const prepared = [], aliases = [], bakedRefs = [];
+  const prepared = [], aliases = [], bakedRefs = [], keeps = [];
   for (const [key, val] of entries) {
     const [mode, variant] = key.split(":").map(Number);
     if (typeof val === "string" && val[0] === "b") {
@@ -499,6 +515,12 @@ async function upload() {
       // reference rather than a transfer.
       const [bm, bv] = val.slice(1).split(":").map(Number);
       bakedRefs.push({ mode, variant, srcMode: bm, srcVariant: bv });
+      continue;
+    }
+    if (typeof val === "string" && val[0] === "k") {
+      // Already on the card: keep it exactly where it is. The audio is not
+      // re-sent; the slot is re-pointed at the same bytes.
+      keeps.push({ mode, variant, off: parseInt(val.slice(1), 10) });
       continue;
     }
     const idx = poolIdx(val);
@@ -518,7 +540,8 @@ async function upload() {
   // A mode the card holds but the page has emptied entirely sends no UP_SLOT,
   // so nothing would clear it. Name those explicitly and revert them, or
   // "set every slot to none and sync" would silently do nothing.
-  const touched = new Set([...prepared, ...aliases, ...bakedRefs].map(x => x.mode));
+  const touched = new Set(
+    [...prepared, ...aliases, ...bakedRefs, ...keeps].map(x => x.mode));
   const onCardModes = new Set(
     Object.keys(state.onCardSlots).map(k => Number(k.split(":")[0])));
   const emptied = [...onCardModes].filter(m => !touched.has(m));
@@ -589,6 +612,13 @@ async function upload() {
     // sync half way through.
     for (const m of emptied) {
       send([MSG.UP_DROP, m]);
+      await waitAck();
+    }
+
+    // Slots keeping audio the card already holds: re-point, do not re-send.
+    for (const k of keeps) {
+      send([MSG.UP_KEEP, k.mode, k.variant,
+            (k.off >> 14) & 0x7F, (k.off >> 7) & 0x7F, k.off & 0x7F]);
       await waitAck();
     }
 
@@ -872,7 +902,17 @@ function refreshSelects() {
         Array.from({ length: bc }, (_, bv) =>
           `<option value="b${bm}:${bv}">${bn} ${bv + 1}</option>`).join("") +
         `</optgroup>`).join("");
-      sel.innerHTML = `<option value="">— none —</option>` +
+      // Audio already on the card for THIS slot, so a reload can show it and a
+      // sync can keep it. Grouped by the offsets actually in use, since two
+      // slots sharing an offset share one recording.
+      const onCardOffs = [...new Set(Object.values(state.onCardSlots)
+                            .map(x => x.off))].sort((a, b) => a - b);
+      const keeps = onCardOffs.length
+        ? `<optgroup label="Already on the card">` + onCardOffs.map((o, i) =>
+            `<option value="k${o}">Card #${i + 1}</option>`).join("") +
+          `</optgroup>`
+        : "";
+      sel.innerHTML = `<option value="">— none —</option>` + keeps +
         (state.pool.length
           ? `<optgroup label="Your samples">` + state.pool.map((p, i) =>
               `<option value="p${i}">${i + 1}. ${p.name}</option>`).join("") +

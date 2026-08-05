@@ -557,6 +557,52 @@ void __not_in_flash_func(WebUI::HandleSysex)(const uint8_t *msg, uint32_t len)
 		break;
 	}
 
+	case MSG_UP_KEEP:
+	{
+		// Keep audio that is ALREADY in the user region: payload mode, variant,
+		// then 3 septets of its offset.
+		//
+		// A sync is authoritative per mode, so it clears each mode it touches -
+		// which would delete audio the page is not re-sending simply because the
+		// page was reloaded and no longer has the file. This re-points the slot
+		// at bytes that are already there, so reloading the editor and adding one
+		// more sample does not destroy the previous four.
+		if (!uploading_ || n < 6) { SendErr(ERR_PROTOCOL); break; }
+		uint8_t dm = p[1], dv = p[2];
+		if (dm >= kNumModes || dv >= kNumVariants) { SendErr(ERR_BAD_SLOT); break; }
+		uint32_t off = (static_cast<uint32_t>(p[3]) << 14)
+		             | (static_cast<uint32_t>(p[4]) << 7)
+		             |  static_cast<uint32_t>(p[5]);
+
+		// Find that offset in the CURRENT on-flash header to recover its size —
+		// the page knows where the audio is, not how long it is.
+		uint32_t sz = 0;
+		const UserSampleHeader *cur = UserHeader();
+		if (cur->magic == kUserMagic && cur->version == kUserVersion)
+			for (int m = 0; m < kNumModes && !sz; m++)
+				for (int v = 0; v < kNumVariants; v++)
+					if (cur->offset[m][v] == off && cur->size[m][v] > 0 &&
+					    !(cur->size[m][v] & kBakedFlag))
+						{ sz = cur->size[m][v]; break; }
+		if (!sz) { SendErr(ERR_PROTOCOL); break; }
+
+		if (!modeCleared_[dm])
+		{
+			modeCleared_[dm] = true;
+			for (int v = 0; v < kNumVariants; v++)
+			{
+				hdr_.offset[dm][v] = 0;
+				hdr_.size[dm][v]   = 0;
+				touched_[dm][v]    = false;
+			}
+		}
+		hdr_.offset[dm][dv] = off;    // already a flash offset
+		hdr_.size[dm][dv]   = sz;
+		touched_[dm][dv]    = false;  // so the commit rebase leaves it alone
+		SendAck(11, sz);
+		break;
+	}
+
 	case MSG_UP_CHUNK:
 	{
 		if (!uploading_) { SendErr(ERR_PROTOCOL); break; }

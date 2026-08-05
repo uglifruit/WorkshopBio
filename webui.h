@@ -32,6 +32,7 @@ enum : uint8_t {
 	MSG_UP_ALIAS   = 0x17,  // ui->fw: point a slot at audio already sent
 	MSG_UP_DROP    = 0x18,  // ui->fw: empty a mode, staged (no reboot)
 	MSG_UP_BAKED   = 0x19,  // ui->fw: point a slot at a BUILT-IN recording
+	MSG_UP_KEEP    = 0x1A,  // ui->fw: keep audio already in the user region
 	MSG_UP_END     = 0x14,  // ui->fw: whole upload done -> commit header, resume
 	MSG_UP_ACK     = 0x15,  // fw->ui: ready for more / progress
 	MSG_UP_ERR     = 0x16,  // fw->ui: something went wrong; payload = code
