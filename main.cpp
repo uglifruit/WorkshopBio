@@ -860,10 +860,17 @@ public:
 			// always carries continuous density instead, in both positions.
 			bool cvAsTrigger = (boot_ == BootMode::Rhythm)
 			                && (routing_ == Routing::Discrete);
+			// CVOutMillivolts calls MillivoltsToDAC, which is FLASH-RESIDENT in
+			// the vendored ComputerCard. Calling it twice per sample at 48kHz
+			// meant two XIP reads in the hot loop while core 1 contends for the
+			// same bus. It is only called now when the value actually changes —
+			// the CV outs move at control rate, so the vast majority of samples
+			// were re-sending a number the DAC already had.
+			int32_t mv;
 			if (cvAsTrigger)
 			{
 				// CV out as a trigger: a calibrated 5V blip.
-				CVOutMillivolts(i, cvTimer_[i] > 0 ? 5000 : 0);
+				mv = cvTimer_[i] > 0 ? 5000 : 0;
 				if (cvTimer_[i] > 0) cvTimer_[i]--;
 			}
 			else
@@ -871,7 +878,12 @@ public:
 				// CV out as continuous state, 0-5V. Slewed a little so stepped
 				// control-rate updates don't click.
 				cvSmooth_[i] = slew(cvSmooth_[i], cvLevel_[i], 4);
-				CVOutMillivolts(i, (cvSmooth_[i] * 5000) >> 16);
+				mv = (cvSmooth_[i] * 5000) >> 16;
+			}
+			if (mv != cvLastMv_[i])
+			{
+				cvLastMv_[i] = mv;
+				CVOutMillivolts(i, mv);
 			}
 		}
 	}
@@ -966,6 +978,10 @@ public:
 	int32_t  clockPeriod_  = 0;   // control ticks between Pulse In 2 edges
 	int32_t  clockAge_     = 0;   // ticks since the last edge
 	int32_t  loudness_     = 0;   // Q16 envelope of Audio In 1
+	// Last value actually written to each CV out, so the flash-resident
+	// MillivoltsToDAC is only called when it changes. Seeded to an impossible
+	// value so the first real write always goes through.
+	int32_t  cvLastMv_[2]  = { -1, -1 };
 	int32_t  lastAudio2_   = 0;
 	bool     startle_      = false;
 	BootMode boot_         = BootMode::Rhythm;
