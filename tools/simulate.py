@@ -264,6 +264,23 @@ def geese(physics, chaos, pop, ticks, spook_every=0, clock_period=0):
 DETUNE = [0, 3000, -2200, 5000]
 
 
+# Frogs coupling curve. MIRRORS kCouple[] in engines.cpp - a geometric sweep of
+# K from 0.40 down to 0.004, because the pond is locked above K~0.25 and
+# scattered below K~0.03, so the whole audible transition is under one octave of
+# K. The cube this replaced spent half the knob above K=0.125 (all locked).
+FROG_COUPLE = [26214, 14741, 8290, 4662, 2621, 1474, 829, 466, 262]
+
+
+def frog_k(physics):
+    """Knob Main -> Kuramoto coupling K, Q16. Linear interp on a Q16 table."""
+    x = max(0, min(Q, physics))
+    idx = (x * 8) >> 16
+    if idx > 7:
+        idx = 7
+    frac = (x * 8) - (idx << 16)
+    return FROG_COUPLE[idx] + mul_q16(FROG_COUPLE[idx + 1] - FROG_COUPLE[idx], frac)
+
+
 def frogs(physics, chaos, pop, ticks, spook_every=0, clock_period=0):
     rng = 0x1234
     phase = []
@@ -277,8 +294,7 @@ def frogs(physics, chaos, pop, ticks, spook_every=0, clock_period=0):
         if 32 < ch < 8192:
             base_hz = ch
     base_inc = (base_hz * (1 << 32)) // (256 * CTRL)
-    inv = Q - physics
-    K = mul_q16(mul_q16(inv, inv), inv)
+    K = frog_k(physics)
     nat = [base_inc + ((base_inc >> 4) * mul_q16(d, chaos) >> 12) for d in DETUNE]
     n = max(pop, 1)
     clock_phase = 0
@@ -319,8 +335,7 @@ def frogs_order(physics, chaos=Q // 2, ticks=CTRL * 15):
         rng = xorshift(rng)
         phase.append(rng)
     base_inc = (400 * (1 << 32)) // (256 * CTRL)
-    inv = Q - physics
-    K = mul_q16(mul_q16(inv, inv), inv)
+    K = frog_k(physics)
     nat = [base_inc + ((base_inc >> 4) * mul_q16(d, chaos) >> 12) for d in DETUNE]
     acc = []
     for t in range(ticks):

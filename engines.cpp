@@ -454,15 +454,42 @@ void __not_in_flash_func(FrogsEngine::tick)(const Ctrl &c, EngineOut &out)
 
 	int32_t baseInc = static_cast<int32_t>(hz_to_inc(baseHz_q8));
 
-	// Knob Main INVERSELY controls coupling: 0.0 = maximum K (locked sync),
-	// 1.0 = K of zero (every frog for itself).
+	int32_t K;
+	// Knob Main INVERSELY controls coupling: CCW = strong K (locked chorus),
+	// CW = weak K (every frog for itself).
 	//
-	// Cubed, because sync is stubborn: even a little coupling drags the chorus
-	// into lock, so a linear knob would stay synced until the very last hair of
-	// travel and then snap. Cubing pushes the sync/chaos transition out into the
-	// middle of the sweep where it can be played.
-	int32_t inv = kQ16One - c.physics;
-	int32_t K = mul_q16(mul_q16(inv, inv), inv);
+	// GEOMETRIC, not cubed. Simulating the order parameter against K shows the
+	// pond is fully locked above K~0.25 and fully scattered below K~0.03: the
+	// entire audible transition lives in less than one octave of K, and
+	// everything outside it sounds the same.
+	//
+	// The cube that used to be here was reasoned backwards. It claimed to push
+	// the transition into the middle of the sweep; it actually spent HALF the
+	// travel above K=0.125 - all of it locked - and crammed the interesting part
+	// between 0.5 and 0.75. That is why the knob felt uniform: most of it was.
+	//
+	// A geometric sweep from 0.40 down to 0.004 puts equal knob travel into equal
+	// RATIOS of K, so the knee lands mid-sweep and stays playable:
+	//
+	//   knob   0.0    0.2    0.4    0.6    0.8    1.0
+	//   K      0.400  0.159  0.063  0.025  0.010  0.004
+	//   order  1.00   0.99   0.54   0.26   0.18   0.15
+	//
+	// Done as a 9-entry table with linear interpolation between points: this is
+	// the 1.5kHz control tick, and an exp() here would be both a float and a libm
+	// call. The table is Q16 K values on a geometric grid.
+	static const int32_t kCouple[9] = {
+		26214, 14741,  8290,  4662,  2621,  1474,   829,   466,   262
+	};
+	{
+		int32_t x = c.physics;
+		if (x < 0) x = 0;
+		if (x > kQ16One) x = kQ16One;
+		int32_t idx = (x * 8) >> 16;            // which segment, 0..8
+		if (idx > 7) idx = 7;
+		int32_t frac = (x * 8) - (idx << 16);   // Q16 position within it
+		K = kCouple[idx] + mul_q16(kCouple[idx + 1] - kCouple[idx], frac);
+	}
 
 	int n = c.population * kSwarmPerAgent;
 	if (n < 1) n = 1;
