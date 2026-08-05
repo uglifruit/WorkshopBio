@@ -622,7 +622,12 @@ void __not_in_flash_func(VoiceBank::render)(int active, int16_t &l, int16_t &r)
 				{
 					v.release += kQ16One / 96;     // 96 samples = 2ms at 48kHz
 					if (v.release > kQ16One) v.release = kQ16One;
-					s = mul_q16(s, v.release);
+					// Plain 32-bit multiply, NOT mul_q16: that widens to int64
+					// and becomes an __aeabi_lmul call, which at one per voice
+					// per sample across eight voices cost ~700 cycles. |s| <=
+					// 2048 and release <= 65536, so the product peaks at 1.3e8
+					// with 16x headroom inside int32.
+					s = (s * v.release) >> 16;
 				}
 			}
 			else
@@ -678,7 +683,11 @@ void __not_in_flash_func(VoiceBank::render)(int active, int16_t &l, int16_t &r)
 			{
 				// Karplus-Strong: average adjacent taps (the low-pass) and feed
 				// it back around the delay line.
-				uint8_t nxt = static_cast<uint8_t>((v.ksPos + 1) % v.ksLen);
+				// Increment and wrap, not `% v.ksLen`: ksLen is not a power of
+				// two, so the modulo compiled to an __aeabi_idivmod call — in
+				// the 48kHz render loop, for every sounding Frogs voice.
+				uint8_t nxt = static_cast<uint8_t>(v.ksPos + 1);
+				if (nxt >= v.ksLen) nxt = 0;
 				int32_t avg = (v.ks[v.ksPos] + v.ks[nxt]) >> 1;
 				avg -= avg >> 6;                  // damping
 				v.ks[v.ksPos] = static_cast<int16_t>(avg);
@@ -729,8 +738,9 @@ void __not_in_flash_func(VoiceBank::render)(int active, int16_t &l, int16_t &r)
 			}
 			}
 
-			// Apply and advance the amplitude envelope.
-			s = mul_q16(s, v.env);
+			// Apply and advance the amplitude envelope. 32-bit multiply for the
+			// same reason as the PCM fade above: synth output is 12-bit too.
+			s = (s * v.env) >> 16;
 			v.env = fast_exp_decay(v.env, v.decayShift);
 		}
 
