@@ -11,10 +11,11 @@
 // mixture. It is a real constraint, not a style preference:
 //
 //   THE RULE. Word-tearing is acceptable for smoothed continuous values — a
-//   one-tick mismatch between droneState[0] and droneState[2] feeds slew() and
-//   is inaudible. It is NEVER acceptable for pointers, lengths or counts, where
-//   a torn read is an out-of-bounds access. Anything with that shape crosses
-//   through TrigRing below, packed into one word, never as a struct.
+//   one-tick mismatch between densityAgent[0] and densityAgent[2] is a control
+//   voltage a fraction of a millisecond stale, and inaudible. It is NEVER
+//   acceptable for pointers, lengths or counts, where a torn read is an
+//   out-of-bounds access. Anything with that shape crosses through TrigRing
+//   below, packed into one word, never as a struct.
 //
 // This is why note-on data crosses as a packed word rather than by calling
 // VoiceBank::note() from core 1: note() writes ~20 fields of Voice, including a
@@ -126,20 +127,16 @@ struct CrossCore
 	/// Continuous CV, Q16 (Summed routing and Drone).
 	volatile int32_t  cvTarget[2];
 
+	/// Bitmask of CV outs carrying a STEPPED value that must not be slewed:
+	/// bit0 = CV 1, bit1 = CV 2. Alt boot's pitch CV sets bit1, because
+	/// gliding between semitones would turn a sequence into a portamento
+	/// smear rather than notes.
+	volatile uint8_t  cvStep;
+
 	/// Gate arming. Core 0 notices pulseSeq change and starts its timers.
 	volatile uint8_t  pulseArm;     // bit0/bit1 -> Pulse Out 1/2
 	volatile uint8_t  cvTrigArm;    // bit0/bit1 -> CV Out 1/2 blips
 	volatile uint32_t pulseSeq;
-
-	/// Drone's control-rate payload. droneUpdate() stays on core 0 because it
-	/// writes Grain fields that droneRender() mutates every sample — see THE
-	/// RULE above. These are smoothed continuous values, so a torn element is
-	/// inaudible.
-	volatile int32_t  droneState[kNumAgents];
-	volatile int32_t  droneGlobal;
-	volatile int32_t  droneChaos;
-	volatile uint8_t  droneTrig;
-	volatile uint32_t droneSeq;
 
 	/// ++ on any trigger. uiTick() on core 0 owns the decay of its own activity
 	/// level; nothing shares a mutable brightness.
@@ -150,6 +147,11 @@ struct CrossCore
 	/// the LED activity glow, which is tuned to flash per hit; this has to read
 	/// as a continuous control voltage over seconds.
 	volatile int32_t  density;
+
+	/// Per-agent smoothed density, Q16. Alt boot's Discrete routing puts agents 1
+	/// and 2 on the pulse outs and THEIR OWN densities on the CV outs, so each
+	/// half of the patch is a trigger and a matching control voltage.
+	volatile int32_t  densityAgent[kNumAgents];
 
 	/// Perf meters, both read out over SysEx with the profile buckets.
 	/// maxBacklog is the worst number of ticks core 1 ever owed at once: 1 is

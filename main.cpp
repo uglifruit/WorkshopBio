@@ -640,12 +640,27 @@ public:
 		density_ = d;
 		gXC.density = d;
 
+		// The same envelope per agent, for alt boot's Discrete routing: each
+		// pulse out gets a CV describing how busy THAT voice is.
+		for (int a = 0; a < kNumAgents; a++)
+		{
+			int32_t da = densityAgent_[a];
+			da += (((mask >> a) & 1) * kQ16One - da) >> 7;
+			if (da < 0) da = 0;
+			if (da > kQ16One) da = kQ16One;
+			densityAgent_[a] = da;
+			gXC.densityAgent[a] = da;
+		}
+
 		// --- Trigger outputs. ---
 		//
 		// Decided here, applied by core 0: this core does not own the gate
 		// timers, which are serviced at 48kHz. pulseSeq is what tells core 0
 		// there is something new to arm.
 		uint8_t pulseArm = 0, cvArm = 0;
+		// CV 2 carries a pitch in alt boot Summed, and a pitch CV must STEP
+		// between values rather than glide, so the usual slew is bypassed.
+		bool stepCv1 = false;
 		// Seeded from what was last published, not from core 0's cvLevel_ — this
 		// core does not own that. Discrete routing leaves them alone, so they
 		// keep whatever the last Summed pass set.
@@ -655,32 +670,47 @@ public:
 
 		if (gXC.bootMode == static_cast<uint8_t>(BootMode::Drone))
 		{
-			// ALT BOOT is the same ecosystem playing the same samples, but as an
-			// INSTRUMENT rather than a menagerie: nothing detunes the recordings
-			// (see VoiceBank's `tuned`), so uploading four notes lets Horses
-			// gallop them and Rain drip them.
+			// ALT BOOT: the same ecosystems, but as an INSTRUMENT rather than a
+			// menagerie. Samples play at their recorded pitch (see VoiceBank's
+			// `tuned`), so uploading four notes lets Horses gallop them and Rain
+			// drip them — and the control outputs describe the SEQUENCE rather
+			// than the ecology.
 			//
-			// Both CV outs are therefore continuous, always — a mode meant for
-			// pitched material should not have half its control outputs firing
-			// blips. They carry two genuinely independent things:
-			//   CV 1 = how BUSY the ecosystem is (smoothed trigger density)
-			//   CV 2 = what the ecosystem is DOING (the engine's own global:
-			//          Frogs' Kuramoto coherence, Cicadas' field loudness,
-			//          Geese's flock agitation, Rain's total water...)
+			// Both CV outs are continuous in both switch positions. A mode meant
+			// for pitched material should not turn half its control outputs into
+			// 5V blips.
 			if (routing == Routing::Discrete)
 			{
-				// Agents 1 and 2 on their own pulse outs.
+				// Two independent voices, each with its own trigger and its own
+				// density: agent 1 on Pulse 1 with its density on CV 1, agent 2
+				// on Pulse 2 with its density on CV 2.
 				if (mask & 0b0001) pulseArm |= 1;
 				if (mask & 0b0010) pulseArm |= 2;
+				cv0 = gXC.densityAgent[0];
+				cv1 = gXC.densityAgent[1];
 			}
 			else
 			{
-				// Everything OR'd onto Pulse 1, clusters accented on Pulse 2.
-				if (mask) pulseArm |= 1;
-				if (popcount4(mask) >= 2) pulseArm |= 2;
+				// Everything on Pulse 1, and Pulse 2 is that DIVIDED BY FOUR — a
+				// bar line against the beat, rather than the cluster accent
+				// Rhythm uses. Free downbeat for anything that wants one.
+				if (mask)
+				{
+					pulseArm |= 1;
+					if (++pulseDiv_ >= 4) { pulseDiv_ = 0; pulseArm |= 2; }
+				}
+				cv0 = gXC.density;
+
+				// CV 2 = WHICH SAMPLE just fired, as 1V/oct: one semitone per
+				// round-robin slot, so slot 0 is 0V and slot 7 is 583mV. An
+				// external oscillator tracks the sequence the ecosystem is
+				// playing.
+				int slot = voices_.lastSlot();
+				cv1 = (slot >= 0)
+					? static_cast<int32_t>((slot * 1000 * kQ16One) / (12 * 5000))
+					: 0;
+				stepCv1 = true;                 // no slew: a pitch CV must step
 			}
-			cv0 = gXC.density;
-			cv1 = out.global;
 		}
 		else if (routing == Routing::Discrete)
 		{
@@ -703,6 +733,7 @@ public:
 
 		gXC.cvTarget[0] = cv0;
 		gXC.cvTarget[1] = cv1;
+		gXC.cvStep = stepCv1 ? 2 : 0;   // bit1: CV 2 is a stepped pitch
 		if (pulseArm || cvArm)
 		{
 			gXC.pulseArm   = pulseArm;
@@ -847,7 +878,10 @@ public:
 			{
 				// CV out as continuous state, 0-5V. Slewed a little so stepped
 				// control-rate updates don't click.
-				cvSmooth_[i] = slew(cvSmooth_[i], cvLevel_[i], 4);
+				// Stepped outputs bypass the slew entirely: gliding between
+				// semitones turns a sequence into portamento.
+				if (gXC.cvStep & (1u << i)) cvSmooth_[i] = cvLevel_[i];
+				else cvSmooth_[i] = slew(cvSmooth_[i], cvLevel_[i], 4);
 				mv = (cvSmooth_[i] * 5000) >> 16;
 			}
 			if (mv != cvLastMv_[i])
@@ -958,6 +992,9 @@ public:
 	int32_t  activity_   = 0;
 	// Smoothed trigger density, core-1 private; published as gXC.density.
 	int32_t  density_    = 0;
+	int32_t  densityAgent_[kNumAgents] = {};
+	// Alt boot Summed: Pulse 2 is Pulse 1 divided by four, a bar line.
+	int      pulseDiv_   = 0;
 	uint32_t seed_       = 0xC0FFEEu;
 
 	int      pulseTimer_[2] = { 0, 0 };

@@ -119,7 +119,7 @@ controls:
       description: All active agents OR'd onto Pulse Out 1, an accent on Pulse Out 2 when two or more fire at once, and continuous CV on both CV outs - agent 1's own state on CV 1, and the whole ecosystem's on CV 2. CV 2 is a LEVEL in every mode - Horses herd sync, Geese flock agitation, Frogs chorus coherence, Rain total water, Meteors debris density, Cicadas field loudness
     down:
       name: WebUI mode/Alt Boot
-      description: HOLD for WebUI mode. HOLD at power-on to boot DRONE mode instead of Rhythm - the LEDs announce which you got, Rhythm lighting the left column and Drone the right
+      description: HOLD for WebUI mode. HOLD at power-on to boot TUNED mode instead of Rhythm - the LEDs announce which you got, Rhythm lighting the left column and Tuned the right. Tuned plays samples at their recorded pitch with no per-animal or per-hit detuning, so uploaded notes can be galloped or dripped, and both CV outs stay continuous. Switch Up gives agents 1 and 2 a trigger each with their own density on the CVs; Switch Middle gives all triggers on Pulse 1, Pulse 1 divided by four on Pulse 2, overall density on CV 1 and WHICH SAMPLE just fired on CV 2 as 1V/oct, one semitone per round-robin slot
     tap:
       name: Ecosystem
       description: Briefly press and release to move to the next ecosystem - Horses, Geese, Frogs, Rain, Meteors, Cicadas

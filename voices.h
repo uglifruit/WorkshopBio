@@ -114,6 +114,11 @@ public:
 	/// Render one sample of all voices, summed and panned into L/R.
 	void render(int active, int16_t &l, int16_t &r);
 
+	/// Which round-robin slot the most recent note used, 0-based, or -1 before
+	/// anything has sounded. Alt boot puts this on a CV as 1V/oct, so an external
+	/// oscillator or filter can follow WHICH sample the ecosystem just fired.
+	int lastSlot() const { return lastSlot_; }
+
 	bool usingPcm() const { return usePcm_; }
 
 private:
@@ -145,6 +150,7 @@ private:
 	uint32_t      sampleLen_[kNumModes][kNumVariants] = {};
 	bool  usePcm_ = false;
 	bool  tuned_  = false;
+	int8_t lastSlot_ = -1;
 };
 
 } // namespace bio

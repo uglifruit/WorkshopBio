@@ -197,6 +197,7 @@ void __not_in_flash_func(VoiceBank::selectVariantAndPan)(Voice &v, int agent, Mo
 		// only sounds like an animal when each leg has its own voice — and with
 		// a herd, each horse plays all four of its own hooves.
 		v.variant = static_cast<uint8_t>(member % kHoofVariants);
+		lastSlot_ = static_cast<int8_t>(v.variant);   // the hoof, for the pitch CV
 	}
 	else
 	{
@@ -237,6 +238,7 @@ void __not_in_flash_func(VoiceBank::selectVariantAndPan)(Voice &v, int agent, Mo
 		// Map onto a slot that actually holds audio, so uploading to slots 1 and
 		// 5 works as well as 1 and 2 — the browser does not have to police order.
 		v.variant = variantSlot_[mi][pick];
+		lastSlot_ = static_cast<int8_t>(pick);   // for the alt-boot pitch CV
 	}
 
 	switch (kPanMode[mi])
