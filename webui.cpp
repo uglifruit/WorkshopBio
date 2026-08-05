@@ -775,7 +775,24 @@ void __not_in_flash_func(WebUI::HandleSysex)(const uint8_t *msg, uint32_t len)
 			int v = v0 + i;
 			uint32_t off = have ? h->offset[m][v] : 0;
 			uint32_t sz  = have ? h->size[m][v]   : 0;
-			if (sz == 0) off = 0;
+
+			// A BAKED slot carries the flag in bit 31 and a mode/variant rather
+			// than an offset and a length. Reporting it raw truncated to 21
+			// septets, so the flag vanished and the browser saw a 0 KB
+			// "recording" whose offset was really a mode index - five phantom
+			// USER entries, and then a keep request for an offset that does not
+			// exist, which is the error 3.
+			//
+			// Reported as offset 0x1FFFFF (unreachable: the region is 0xFF000)
+			// with the mode and variant in the size field, so the browser can
+			// tell the two apart.
+			if (sz & kBakedFlag)
+			{
+				off = 0x1FFFFFu;
+				sz  = (static_cast<uint32_t>(h->offset[m][v]) << 8)
+				    | (sz & 0xFFu);
+			}
+			else if (sz == 0) off = 0;
 			uint8_t *q = &sd[4 + i * 6];
 			q[0] = static_cast<uint8_t>((off >> 14) & 0x7F);
 			q[1] = static_cast<uint8_t>((off >> 7)  & 0x7F);
