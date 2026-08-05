@@ -103,6 +103,7 @@ void HorsesEngine::reset(uint32_t seed)
 	rng_ = seed | 1u;
 	lastGait_ = 0xFF;
 	herdSync_ = 0;
+	for (int h = 0; h < kNumAgents; h++) hoofEnv_[h] = 0;
 	for (int h = 0; h < kNumAgents; h++)
 	{
 		// Stagger the herd's starting positions so they don't begin in unison.
@@ -220,8 +221,17 @@ void __not_in_flash_func(HorsesEngine::tick)(const Ctrl &c, EngineOut &out)
 			}
 		}
 
-		// State CV: this horse's position in its stride — a per-animal LFO.
-		out.state[h] = static_cast<int32_t>(stride_[h] >> 16);
+		// State CV: this horse's FOOTFALL ACTIVITY, up on each hoof landing and
+		// decaying between.
+		//
+		// It used to be the raw stride phase, a sawtooth — every other engine
+		// puts a level here, so a patch reading CV 1 as modulation depth got an
+		// LFO from this one mode. The stride ramp is genuinely useful, but it is
+		// not the same KIND of signal, and consistency across the six modes is
+		// worth more than one mode's extra trick.
+		if (out.triggers & (1 << h)) hoofEnv_[h] = kQ16One;
+		else hoofEnv_[h] = fast_exp_decay(hoofEnv_[h], 5);
+		out.state[h] = hoofEnv_[h];
 	}
 
 	// Global: HERD SYNC — how closely the animals are in step, 65536 = moving as

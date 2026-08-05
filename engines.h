@@ -29,6 +29,10 @@ private:
 	// horse's raw stride phase - a ramp on a CV out that every other mode uses
 	// for a level.
 	int32_t  herdSync_;
+	// Per-horse footfall envelope, Q16: up when that animal plants a hoof, down
+	// between. state[] used to be the raw stride PHASE, a sawtooth on a CV out
+	// that carries a level in every other mode.
+	int32_t  hoofEnv_[kNumAgents];
 	int32_t  jitter_[kNumAgents][kNumAgents];  // [horse][hoof] timing offset
 	uint8_t  lastStep_[kNumAgents][kNumAgents];
 	// Countdown for the second foot of a "simultaneous" pair, so trot and
