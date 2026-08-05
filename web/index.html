@@ -653,7 +653,7 @@ async function sync(sendAudio) {
   prog.hidden = false; prog.value = 0;
   document.getElementById("upload").disabled = true;
   document.getElementById("remap").disabled = true;
-  setStatus("Syncing… the card keeps playing until the last chunk arrives.");
+  setStatus("Syncing… the card restarts into your samples when this finishes.");
 
   // Set once the sync has committed and the card is on its way to rebooting.
   // A failure leaves it false, so the buttons come back and the sync can be

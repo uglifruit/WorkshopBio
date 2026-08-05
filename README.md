@@ -255,12 +255,13 @@ Uploaded samples **override the baked ones per slot**, so you can replace just t
 and keep everything else. **Revert to built-in** forgets them again. A full library
 takes a few seconds.
 
-> The card **keeps playing while it receives**, then stops for the final write and
-> **reboots** into the new samples. Writing flash halts the RP2040 — and takes USB down
-> with it, since the USB stack itself lives in flash — so the whole transfer is buffered
-> in RAM and committed in one go at the end. That caps a single upload at **128 KB**:
-> one large recording or several small ones per pass. Uploading is a setup activity,
-> not a performance one.
+> The card is **silent throughout**. Holding the switch stops the ecosystem and hands
+> the card to USB; it **reboots** back into playing when you are done. Writing flash
+> halts the RP2040 — and takes USB down with it, since the USB stack itself lives in
+> flash — so the whole transfer is buffered in RAM and committed in one go at the end.
+> That caps a single upload at **160 KB**, about 3.4 seconds of audio, but uploads
+> **append**, so the full 1 MB region is reachable over successive passes. Uploading is
+> a setup activity, not a performance one.
 
 Flash layout: firmware and baked samples occupy the first 1&nbsp;MB, user samples the
 second. The build fails loudly if the firmware ever grows into the user region, because

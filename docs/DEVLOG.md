@@ -639,6 +639,11 @@ design changed:
 
 The card stops being a synth only for the final commit, not for the transfer.
 
+*(Later correction: it stops well before that. USB is modal — holding the switch
+ends the ecosystem and hands the card over, so it is silent for the whole
+session, not just the commit. The claim above described the transfer mechanism
+and quietly became a claim about what you hear, which is not the same thing.)*
+
 ### What it cost
 
 One upload is now capped at **128KB by RAM**, not by the 1MB flash region.
@@ -1134,7 +1139,8 @@ second is what else is writing the same variable.
   read. **Sample upload now works on hardware** — transfers complete, commit, and
   the samples survive the reboot. It took six attempts; the constraint that
   finally explained it is that TinyUSB lives in flash, so USB and flash writes
-  cannot coexist. Uploads are RAM-staged and capped at 128KB per pass.
+  cannot coexist. Uploads are RAM-staged and capped at 160KB per pass, and they
+  APPEND, so the full region is reachable over several passes.
 - **When a fix fails twice, make the third attempt a measurement.** The uploader
   took six tries; the one that solved it added a stage counter on the LEDs rather
   than changing any logic. One reading (stage 5) proved the flash write was
