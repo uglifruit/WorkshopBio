@@ -50,9 +50,20 @@ enum : uint8_t {
 constexpr uint8_t kManufacturerId = 0x7D;
 
 /// Largest single upload, set by the RAM staging buffer rather than by the 1MB
-/// flash region. Writing flash takes USB down with it, so a transfer has to be
-/// received in full before any of it is committed.
-constexpr uint32_t kUploadMax = 128u * 1024u;
+/// flash region. Writing flash takes USB down with it — TinyUSB's stack and its
+/// interrupt handler both live there — so a transfer has to be received in FULL
+/// before any of it is committed.
+///
+/// 160KB of the RP2040's 264KB. This buffer alone is ~74% of the card's total
+/// RAM use; everything else fits in 54KB. The practical ceiling is around 192KB,
+/// which would leave under 11KB spare, so this keeps ~43KB of margin for stack
+/// and any future growth.
+///
+/// It caps one PASS, not the card: uploads append (see baseOff_), so the full
+/// 1020KB region is reachable in successive passes. Removing the cap properly
+/// means committing per SLOT at MSG_UP_SLOTEND and letting USB drop and return
+/// between slots — a protocol change, not a constant.
+constexpr uint32_t kUploadMax = 160u * 1024u;
 
 // Error codes carried by MSG_UP_ERR.
 enum : uint8_t {
