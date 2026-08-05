@@ -139,6 +139,14 @@ private:
 	DroneVoice d_[kNumAgents];
 	uint8_t lastVariant_[kNumAgents];  // for no-immediate-repeat
 	uint32_t rng_ = 0x9E3779B9u;
+
+	// Which slots actually hold audio, resolved ONCE in init() rather than per
+	// note-on. VariantCount() and PickUserVariant() each walk all eight slots
+	// through the user header in XIP flash, and calling them per trigger cost
+	// real cycles in the hot path for an answer that only changes when samples
+	// are uploaded — which reboots the card anyway.
+	uint8_t variantCount_[kNumModes] = {};
+	uint8_t variantSlot_[kNumModes][kNumVariants] = {};
 	bool  usePcm_ = false;
 };
 

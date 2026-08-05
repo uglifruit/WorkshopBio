@@ -116,6 +116,26 @@ void VoiceBank::init(bool usePcm)
 	// AnySamples() covers both sources: a user upload alone is enough, even in
 	// a build with nothing baked in.
 	usePcm_ = usePcm && AnySamples();
+
+	// Resolve the variant tables once, here, instead of walking the user header
+	// in flash on every note-on. Uploading samples reboots the card, so this can
+	// never go stale while the card is playing.
+	for (int m = 0; m < kNumModes; m++)
+	{
+		int n = 0;
+		if (ModeIsUserLoaded(m))
+		{
+			const UserSampleHeader *h = UserHeader();
+			for (int v = 0; v < kNumVariants; v++)
+				if (h->size[m][v] > 0) variantSlot_[m][n++] = static_cast<uint8_t>(v);
+		}
+		else if (kHaveSamples)
+		{
+			for (int v = 0; v < kNumVariants; v++) variantSlot_[m][n++] = static_cast<uint8_t>(v);
+		}
+		variantCount_[m] = static_cast<uint8_t>(n);
+	}
+
 	for (int i = 0; i < kNumAgents; i++)
 	{
 		Voice &v = v_[i];
@@ -163,16 +183,36 @@ void __not_in_flash_func(VoiceBank::selectVariantAndPan)(Voice &v, int agent, Mo
 		// have. Uploading two geese used to leave the other six baked recordings
 		// in the rotation, so you heard your two mixed with six of the card's —
 		// never what replacing a mode is meant to do.
-		int n = VariantCount(mi);
+		// No divide, and no retry loop. `% n` compiled to an __aeabi_uidivmod
+		// call — a software divide on a core with no divider — INSIDE a loop
+		// that can spin, and this runs per note-on. Together with the two
+		// flash-walking helpers it made a single note() cost ~2148 cycles,
+		// 82% of the whole sample budget.
+		//
+		// Advance-and-wrap instead: it gives the same "never twice running"
+		// guarantee by construction rather than by rejection, and costs an add
+		// and a compare.
+		int n = variantCount_[mi];
 		if (n < 1) n = 1;
 		uint8_t pick;
-		do {
-			pick = static_cast<uint8_t>(xorshift32(rng_) % static_cast<uint32_t>(n));
-		} while (pick == lastVariant_[agent] && n > 1);
+		if (n == 1)
+		{
+			pick = 0;
+		}
+		else
+		{
+			// Step 1..n-1 places on from the last one, so it always differs.
+			uint32_t adv = 1u + (xorshift32(rng_) & 7u);
+			while (adv >= static_cast<uint32_t>(n)) adv -= static_cast<uint32_t>(n);
+			if (adv == 0) adv = 1;
+			int next = lastVariant_[agent] + static_cast<int>(adv);
+			while (next >= n) next -= n;
+			pick = static_cast<uint8_t>(next);
+		}
 		lastVariant_[agent] = pick;
 		// Map onto a slot that actually holds audio, so uploading to slots 1 and
 		// 5 works as well as 1 and 2 — the browser does not have to police order.
-		v.variant = static_cast<uint8_t>(PickUserVariant(mi, pick));
+		v.variant = variantSlot_[mi][pick];
 	}
 
 	switch (kPanMode[mi])
@@ -189,9 +229,18 @@ void __not_in_flash_func(VoiceBank::selectVariantAndPan)(Voice &v, int agent, Mo
 		setPan(v, 1 + agent * 4 + (v.variant & 3));
 		break;
 	case PanMode::Random:
+	{
 		// Anywhere — every drip and every meteor is a new object.
-		setPan(v, static_cast<int>(xorshift32(rng_) % 17));
+		//
+		// `% 17` is a software divide on this core, per note-on. Masking to 0..31
+		// and folding the top half back gives 0..16 with only a compare and a
+		// subtract; the slight bias toward the middle positions is inaudible in a
+		// pan position that is meant to be arbitrary anyway.
+		uint32_t p = xorshift32(rng_) & 31u;
+		if (p > 16u) p -= 17u;
+		setPan(v, static_cast<int>(p));
 		break;
+	}
 	}
 }
 
@@ -394,10 +443,14 @@ void __not_in_flash_func(VoiceBank::droneUpdate)(Mode m, const int32_t *state, i
 			// the hoof/individual distinction does not apply.
 			// Same bound as the Rhythm round robin: granulate only what this mode
 			// actually has, so two uploaded geese do not get mixed with six baked.
-			int nvar = VariantCount(mi);
+			// Cached table, and a mask rather than a modulo: same reasoning as
+			// the Rhythm round robin above. A grain launch is control-rate, but
+			// there is no reason to pay a software divide for it either.
+			int nvar = variantCount_[mi];
 			if (nvar < 1) nvar = 1;
-			uint8_t var = static_cast<uint8_t>(PickUserVariant(mi,
-				static_cast<int>(xorshift32(d.rng) % static_cast<uint32_t>(nvar))));
+			uint32_t r = xorshift32(d.rng) & 7u;
+			while (r >= static_cast<uint32_t>(nvar)) r -= static_cast<uint32_t>(nvar);
+			uint8_t var = variantSlot_[mi][r];
 			SampleRef sr = ResolveSample(mi, var);
 			g.pcm = sr.data;
 			g.len = sr.len;
