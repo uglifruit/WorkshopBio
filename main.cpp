@@ -489,6 +489,20 @@ private:
 	/// exactly one thing — Rhythm — and Drone's numbers stay comparable.
 	void __not_in_flash_func(droneControlTick)()
 	{
+		// Consume the mode-change request HERE, because in alt boot core 1 skips
+		// physicsTick() entirely — so the consumer that normally handles this
+		// never runs, and a tap did nothing at all. The card was stuck on Horses
+		// for the whole session. Introduced when mode ownership moved to core 1
+		// and Drone was left on the old core-0 path.
+		uint32_t mc = gXC.modeCycleReq;
+		if (mc != lastModeReq_)
+		{
+			lastModeReq_ = mc;
+			mode_ = static_cast<uint8_t>((mode_ + 1) % kNumModes);
+			engines_[mode_]->reset(seed_ ^ (mode_ * 2654435761u));
+			gXC.mode = mode_;
+		}
+
 		int32_t physics = knob_to_q16(KnobVal(Knob::Main));
 		if (Connected(Input::CV1)) physics += CVIn1() << 4;
 		physics = clampQ16(physics);

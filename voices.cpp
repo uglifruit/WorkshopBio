@@ -270,18 +270,25 @@ void __not_in_flash_func(VoiceBank::note)(int i, Mode m, int32_t accent, int32_t
 	// is the least audible thing to interrupt — and the release ramp below hides
 	// what is left of it.
 	int slot = -1;
-	uint32_t mostPlayed = 0;
+	uint32_t leastLeft = 0xFFFFFFFFu;
 	int oldestSlot = 0;
 	for (int k = 0; k < kNumVoices; k++)
 	{
 		if (v_[k].agent < 0) { slot = k; break; }
-		// Which sounding voice is closest to finished? For PCM that is simply
-		// the one furthest through its recording — no divide needed, since we
-		// only need to compare, not to normalise. Synth voices fall back to
-		// their envelope, inverted so "most decayed" sorts the same way.
-		uint32_t played = v_[k].pcm ? v_[k].pcmIdx
-		                            : static_cast<uint32_t>(kQ16One - v_[k].env);
-		if (played >= mostPlayed) { mostPlayed = played; oldestSlot = k; }
+		// Which sounding voice has the LEAST LEFT to play?
+		//
+		// This used to compare how far each voice had got, which is wrong when
+		// samples differ in length: a 770ms frog 300ms in looked "more played"
+		// than a 179ms goose 150ms in, even though the goose is nearly finished
+		// and the frog is a third of the way through. Frogs are the longest
+		// recordings on the card (770ms mean against Geese's 179ms), so they
+		// were the ones being cut — which is exactly what was reported.
+		//
+		// Remaining, not progress. Still a subtraction, no divide.
+		uint32_t left = v_[k].pcm
+			? (v_[k].pcmLen > v_[k].pcmIdx ? v_[k].pcmLen - v_[k].pcmIdx : 0)
+			: static_cast<uint32_t>(v_[k].env);
+		if (left <= leastLeft) { leastLeft = left; oldestSlot = k; }
 	}
 	if (slot < 0) slot = oldestSlot;
 
