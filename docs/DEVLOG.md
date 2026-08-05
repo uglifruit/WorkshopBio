@@ -842,6 +842,65 @@ on core 0 — Stage 4.**
 
 ---
 
+## Voice truncation: what a fix can and cannot be
+
+Reported as samples audibly cut off when hits overlap. Two causes, one of them
+invisible from outside: there was **one voice per agent, hard-retriggered**, and
+**the PCM path had no envelope at all** — `v.env` was written by `note()` and only
+ever read inside the synth branch, so a recording played flat to its end and a
+retrigger jumped straight to the new sample's first byte.
+
+Now a pool of 8 with an allocator that steals the voice *furthest through its
+recording* — the least audible thing to interrupt — and a 2 ms fade-in on every
+note so a steal is a crossfade rather than a step.
+
+### It cannot be "fixed", and that is not a cop-out
+
+Voices needed for **zero** steals, being sample length × trigger rate × agents:
+
+| mode | sample | voices for zero steals |
+|------|-------:|----------------------:|
+| Drips | 0.10 s | ~8 |
+| Cicadas | 0.15 s | ~10 |
+| Geese | 0.18 s | ~12 |
+| **Meteors** | **2.47 s** | **~168** |
+
+`meteors_5` alone would want 168 voices. Any sampler with finite polyphony steals
+eventually, and a user uploading a five-second pad into Drips will steal
+constantly whatever the pool size. **The goal was never zero steals — it is that a
+steal does not sound like a fault.** Confirmed by ear: at X≈50%, full Geese is a
+big gaggle with no audible clipping.
+
+### The costs were flash, not arithmetic
+
+Three rounds of measurement, and the pattern repeated:
+
+- **`mul_q16` widens to `int64_t`** → an `__aeabi_lmul` call, one per voice per
+  sample. This is the *same* mistake fixed in `droneRender` two rounds earlier,
+  re-introduced in new code. The lesson had not become a habit.
+- **`ResolveSample()` read the user header through XIP on every trigger** — magic,
+  version, size, offset: four flash reads while core 1 contends for the same bus.
+  Cached at init, and Note-ons fell 1492 → 1099.
+- **`CVOutMillivolts` calls `MillivoltsToDAC`, which is flash-resident** in the
+  vendored ComputerCard — twice per sample at 48 kHz, nearly always re-sending a
+  value the DAC already had. Now guarded by a change check.
+
+**Voices is simply linear**: 835/4 = 209 cycles per voice before the pool,
+1591/8 = 199 after. The pool added voices, not overhead — that is what eight
+concurrent interpolating PCM readers cost, and no micro-optimisation changes it.
+
+### Where it stopped
+
+Full Geese, the worst case on the card: **Total 2652 of 2604 — 1.8% over, one
+overrun in ~1.4 million samples.** Down from 3071 and 251 overruns.
+
+Stopping here deliberately. Chasing the last 48 cycles would be optimising a
+number rather than a sound, and the planned 192 MHz bump makes 2652 into 66% of
+budget. The remaining item is `Voices`, which means fewer voices — a musical
+trade, not a bug.
+
+---
+
 ## Standing notes
 
 - **`tools/simulate.py` duplicates the C++ constants.** It will drift if
