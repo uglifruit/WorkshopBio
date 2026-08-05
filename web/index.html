@@ -39,26 +39,29 @@
   }
   .mode h2 { margin:0 0 .15rem; font-size:1rem; }
   .mode .hint { color:var(--dim); font-size:.85rem; margin:0 0 .6rem; }
-  .slots { display:grid; grid-template-columns:repeat(auto-fill,minmax(94px,1fr)); gap:.4rem; }
+  /* Wider cells than the old file-drop slots needed: each now holds a dropdown
+     whose longest entry is "NEW 1 — somefilename.wav". min-width:0 on the select
+     is what actually stops it forcing the grid cell wider than its track and
+     overlapping its neighbour. */
+  .slots { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:.4rem; }
   .slot {
-    border:1px dashed var(--line); border-radius:7px; padding:.5rem .4rem;
-    text-align:center; font-size:.78rem; color:var(--dim); cursor:pointer;
+    border:1px dashed var(--line); border-radius:7px; padding:.45rem .5rem;
+    font-size:.78rem; color:var(--dim);
     background:#12160f00; transition:border-color .12s,color .12s;
+    display:flex; align-items:center; gap:.45rem; min-width:0;
   }
   .slot:hover, .slot.drag { border-color:var(--accent); color:var(--text); }
   .slot.filled { border-style:solid; border-color:var(--accent); color:var(--text); }
   /* Already on the card, nothing staged for it: solid but muted, so you can see
      what you are adding to rather than guessing. */
   .slot.oncard { border-style:solid; border-color:var(--dim); color:var(--text); }
-  .slot { position:relative; }
-  .slot .x {
-    position:absolute; top:1px; right:4px; font-size:.9rem; line-height:1;
-    color:var(--dim); display:none;
+  .slot .n { font-weight:700; color:var(--text); flex:0 0 auto; }
+  .slot select {
+    flex:1 1 auto; min-width:0; width:100%;
+    font:inherit; font-size:.76rem; color:var(--text);
+    background:var(--bg); border:1px solid var(--line); border-radius:5px;
+    padding:.2rem .25rem;
   }
-  .slot.filled .x { display:block; }
-  .slot .x:hover { color:var(--err); }
-  .slot .n { display:block; font-weight:700; color:var(--text); }
-  .slot .len { display:block; font-size:.72rem; color:var(--dim); }
   progress { width:100%; height:8px; margin-top:1rem; }
   .note { color:var(--dim); font-size:.86rem; }
   .note code { color:var(--text); background:#0000; }
@@ -968,7 +971,8 @@ function build() {
       sel.onchange = () => {
         const k = `${mi}:${v}`;
         if (sel.value === "") delete state.slots[k];
-        else state.slots[k] = sel.value;     // "p<i>" or "b<mode>:<variant>"
+        else state.slots[k] = sel.value;   // "k<off>", "p<i>" or "b<mode>:<var>"
+        renderPool();                      // usage counts change
         updateUsage();
       };
       s.appendChild(sel);
@@ -1073,13 +1077,11 @@ function updateUsage() {
       const has = (bits >> v) & 1;
       const slot = sel.parentElement;
       if (slot) slot.classList.toggle("oncard", !assigned && !!has);
-      // Say what the card already holds, so it is clear what you are adding to.
-      const opt = sel.querySelector('option[value=""]');
-      // "none" means this slot is not in the rotation at all. Once ANY slot of a
-      // mode is uploaded the card ignores that mode's built-in recordings, so
-      // leaving a slot empty genuinely shortens the round robin - set Geese 8 to
-      // none and you get seven geese, not seven plus a stock one.
-      opt.textContent = has ? "— none (was on card) —" : "— none —";
+      // Deliberately does NOT touch the option list or its labels. It used to
+      // relabel the empty option here, which ran AFTER refreshSelects() and so
+      // overwrote the correct labels — a slot holding USER 1 read
+      // "none (was on card)" and looked unset. Building the options is
+      // refreshSelects()'s job alone.
     }
 
     const staged = Object.keys(state.slots)
