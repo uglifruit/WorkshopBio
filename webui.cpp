@@ -467,6 +467,38 @@ void __not_in_flash_func(WebUI::HandleSysex)(const uint8_t *msg, uint32_t len)
 		break;
 	}
 
+	case MSG_UP_ALIAS:
+	{
+		// Point this slot at audio that has ALREADY been sent, instead of
+		// sending it again. payload: mode, variant, srcMode, srcVariant.
+		//
+		// The header is a plain (offset, size) pair per slot, so nothing stops
+		// two slots naming the same bytes — the firmware plays it in both places
+		// without knowing they are shared. That makes reuse free: map one
+		// recording onto four hooves and it costs the flash of one recording.
+		if (!uploading_ || n < 5) { SendErr(ERR_PROTOCOL); break; }
+		uint8_t dm = p[1], dv = p[2], sm = p[3], sv = p[4];
+		if (dm >= kNumModes || dv >= kNumVariants ||
+		    sm >= kNumModes || sv >= kNumVariants) { SendErr(ERR_BAD_SLOT); break; }
+		if (hdr_.size[sm][sv] == 0) { SendErr(ERR_PROTOCOL); break; }
+
+		if (!modeCleared_[dm])
+		{
+			modeCleared_[dm] = true;
+			for (int v = 0; v < kNumVariants; v++)
+			{
+				hdr_.offset[dm][v] = 0;
+				hdr_.size[dm][v]   = 0;
+				touched_[dm][v]    = false;
+			}
+		}
+		hdr_.offset[dm][dv] = hdr_.offset[sm][sv];
+		hdr_.size[dm][dv]   = hdr_.size[sm][sv];
+		touched_[dm][dv]    = touched_[sm][sv];
+		SendAck(8, hdr_.size[dm][dv]);
+		break;
+	}
+
 	case MSG_UP_CHUNK:
 	{
 		if (!uploading_) { SendErr(ERR_PROTOCOL); break; }

@@ -136,6 +136,11 @@ void VoiceBank::init(bool usePcm, bool tuned)
 		int n = 0;
 		if (ModeIsUserLoaded(m))
 		{
+			// Every filled slot counts, INCLUDING two that point at the same
+			// audio. The web UI lets one uploaded recording be mapped to several
+			// slots — and if you put one file on both Horses 1 and Horses 3 you
+			// meant two hooves, not one. Deliberate reuse is not padding, so the
+			// duplicate test below deliberately does not apply here.
 			const UserSampleHeader *h = UserHeader();
 			for (int v = 0; v < kNumVariants; v++)
 				if (h->size[m][v] > 0) variantSlot_[m][n++] = static_cast<uint8_t>(v);

@@ -29,6 +29,7 @@ enum : uint8_t {
 	MSG_UP_SLOT    = 0x11,  // ui->fw: begin a mode+variant; payload mode,variant,len
 	MSG_UP_CHUNK   = 0x12,  // ui->fw: 7-bit-encoded audio for the current slot
 	MSG_UP_SLOTEND = 0x13,  // ui->fw: this slot is complete
+	MSG_UP_ALIAS   = 0x17,  // ui->fw: point a slot at audio already sent
 	MSG_UP_END     = 0x14,  // ui->fw: whole upload done -> commit header, resume
 	MSG_UP_ACK     = 0x15,  // fw->ui: ready for more / progress
 	MSG_UP_ERR     = 0x16,  // fw->ui: something went wrong; payload = code
