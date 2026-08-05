@@ -102,8 +102,15 @@
 #define CFG_TUD_VENDOR            0
 
 // MIDI FIFO size of TX and RX
-#define CFG_TUD_MIDI_RX_BUFSIZE   (TUD_OPT_HIGH_SPEED ? 512 : 64)
-#define CFG_TUD_MIDI_TX_BUFSIZE   (TUD_OPT_HIGH_SPEED ? 512 : 64)
+// 256, not 64. SysEx goes out as USB-MIDI packets of 4 bytes carrying 3 data
+// bytes each, so a 54-byte reply needs 72 bytes of FIFO -- more than the default
+// 64 could ever hold, whatever the timing. That made the longest replies
+// impossible to send intact rather than merely tight, and the symptoms were
+// wonderful: "the card did not identify itself", a sync failing at random, and
+// "user samples loaded" reported on a card with none, all from truncated or
+// half-read replies.
+#define CFG_TUD_MIDI_RX_BUFSIZE   (TUD_OPT_HIGH_SPEED ? 512 : 256)
+#define CFG_TUD_MIDI_TX_BUFSIZE   (TUD_OPT_HIGH_SPEED ? 512 : 256)
 
 #ifdef __cplusplus
  }

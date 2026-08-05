@@ -421,8 +421,11 @@ async function connect() {
       return;
     }
     send([MSG.HELLO]);
+    // Insist on a full INFO. A short or mismatched reply used to be read as one
+    // anyway, so a truncated message reported "user samples loaded" on a card
+    // that had none.
     const info = await waitAck(1500).catch(() => null);
-    if (info && info[2] === MSG.INFO) {
+    if (info && info[2] === MSG.INFO && info.length >= 16) {
       // cap is the PER-UPLOAD transfer limit (the card's RAM staging buffer);
       // used/total describe the flash region. They are different things, and
       // conflating them made a card with 900KB free report "too big".
@@ -453,16 +456,21 @@ async function connect() {
       // reboot, not just what this session loaded. Slots sharing an offset are
       // sharing one recording, which is how reuse survives the round trip.
       state.onCardSlots = {};
+      // Two requests per mode: the card reports four slots at a time, because
+      // all eight did not fit in the USB-MIDI transmit buffer.
       for (let m = 0; m < MODES.length; m++) {
-        send([MSG.SLOTINFO, m]);
-        const det = await waitAck(1500).catch(() => null);
-        if (!det || det[2] !== MSG.SLOTDET) break;
-        const nv = det[4];
-        for (let v = 0; v < nv; v++) {
-          const b = 5 + v * 6;
-          const off = (det[b] << 14) | (det[b+1] << 7) | det[b+2];
-          const sz  = (det[b+3] << 14) | (det[b+4] << 7) | det[b+5];
-          if (sz > 0) state.onCardSlots[`${m}:${v}`] = { off, sz };
+        for (let half = 0; half < 2; half++) {
+          send([MSG.SLOTINFO, m, half]);
+          const det = await waitAck(1500).catch(() => null);
+          if (!det || det[2] !== MSG.SLOTDET) continue;
+          const nv = det[5];
+          const v0 = det[4] * nv;
+          for (let i = 0; i < nv; i++) {
+            const b = 6 + i * 6;
+            const off = (det[b] << 14) | (det[b+1] << 7) | det[b+2];
+            const sz  = (det[b+3] << 14) | (det[b+4] << 7) | det[b+5];
+            if (sz > 0) state.onCardSlots[`${m}:${v0 + i}`] = { off, sz };
+          }
         }
       }
       // Seed the page's mapping FROM THE CARD, so a reload shows what is
@@ -472,6 +480,20 @@ async function connect() {
       // same bytes rather than re-sending them.
       for (const [key, { off }] of Object.entries(state.onCardSlots))
         if (state.slots[key] === undefined) state.slots[key] = `k${off}`;
+
+      // Any slot the card has NOT been given a recording for is playing its own
+      // built-in one, so show that rather than "none" - the page should open as
+      // a picture of what the card is doing, and Horses 1 is playing Horses 1.
+      // Only for modes with no uploads at all: once a mode has any, the card
+      // ignores that mode's built-ins entirely and an empty slot really is empty.
+      MODES.forEach(([, , count], mi) => {
+        const modeHasUploads = Object.keys(state.onCardSlots)
+                                     .some(k => k.startsWith(`${mi}:`));
+        if (modeHasUploads) return;
+        for (let v = 0; v < count; v++)
+          if (state.slots[`${mi}:${v}`] === undefined)
+            state.slots[`${mi}:${v}`] = `b${mi}:${v}`;
+      });
 
       renderOnCard();
       refreshSelects();

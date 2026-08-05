@@ -745,30 +745,46 @@ void __not_in_flash_func(WebUI::HandleSysex)(const uint8_t *msg, uint32_t len)
 		//
 		// One mode per request: eight slots x two 3-septet fields is 48 bytes,
 		// and Send() has a 64-byte buffer.
-		if (n < 2) { SendErr(ERR_PROTOCOL); break; }
+		// payload: mode, then which HALF of the slots (0 or 1).
+		//
+		// Four slots per reply, not eight. USB-MIDI carries 3 data bytes per
+		// 4-byte packet, so all eight needed 72 FIFO bytes against a TX buffer
+		// that was 64 - the reply could never be sent whole. Splitting it keeps
+		// each message comfortably inside even the default buffer.
+		if (n < 3) { SendErr(ERR_PROTOCOL); break; }
 		uint8_t m = p[1];
+		uint8_t half = p[2] ? 1 : 0;
 		if (m >= kNumModes) { SendErr(ERR_BAD_SLOT); break; }
+		constexpr int kPerMsg = kNumVariants / 2;
+		static_assert(kPerMsg * 2 == kNumVariants,
+		              "kNumVariants must be even to split the reply in half");
+		const int v0 = half * kPerMsg;
 
-		uint8_t sd[3 + kNumVariants * 6];
-		uint32_t o = 0;
-		sd[o++] = MSG_SLOTDET;
-		sd[o++] = m;
-		sd[o++] = static_cast<uint8_t>(kNumVariants);
+		uint8_t sd[4 + kPerMsg * 6];
+		sd[0] = MSG_SLOTDET;
+		sd[1] = m;
+		sd[2] = half;
+		sd[3] = static_cast<uint8_t>(kPerMsg);
 		const UserSampleHeader *h = UserHeader();
 		bool have = HaveUserSamples();
-		for (int v = 0; v < kNumVariants; v++)
+		// Indexed rather than run through a counter, so the bound is obvious to
+		// the compiler as well as to the reader — with a running uint32_t it
+		// could not prove the writes stayed inside sd[] and warned on every one.
+		for (int i = 0; i < kPerMsg; i++)
 		{
+			int v = v0 + i;
 			uint32_t off = have ? h->offset[m][v] : 0;
 			uint32_t sz  = have ? h->size[m][v]   : 0;
 			if (sz == 0) off = 0;
-			sd[o++] = static_cast<uint8_t>((off >> 14) & 0x7F);
-			sd[o++] = static_cast<uint8_t>((off >> 7)  & 0x7F);
-			sd[o++] = static_cast<uint8_t>( off        & 0x7F);
-			sd[o++] = static_cast<uint8_t>((sz  >> 14) & 0x7F);
-			sd[o++] = static_cast<uint8_t>((sz  >> 7)  & 0x7F);
-			sd[o++] = static_cast<uint8_t>( sz         & 0x7F);
+			uint8_t *q = &sd[4 + i * 6];
+			q[0] = static_cast<uint8_t>((off >> 14) & 0x7F);
+			q[1] = static_cast<uint8_t>((off >> 7)  & 0x7F);
+			q[2] = static_cast<uint8_t>( off        & 0x7F);
+			q[3] = static_cast<uint8_t>((sz  >> 14) & 0x7F);
+			q[4] = static_cast<uint8_t>((sz  >> 7)  & 0x7F);
+			q[5] = static_cast<uint8_t>( sz         & 0x7F);
 		}
-		Send(sd, o);
+		Send(sd, sizeof(sd));
 		break;
 	}
 
