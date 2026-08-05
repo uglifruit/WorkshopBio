@@ -72,10 +72,19 @@ struct Voice
 	// finished, and with one voice each that cut the sound off mid-body.
 	int8_t   agent;
 
-	// Release ramp, Q16. A stolen or restarted voice fades over a few ms instead
-	// of jumping to the new sample's first byte — that discontinuity was the
-	// audible "truncation" on overlapping hits.
+	// Fade-in ramp, Q16, climbing to unity over a couple of ms at note-on.
 	int32_t  release;
+
+	// Fade-OUT, for a voice that has been stolen. Counts down from kQ16One; the
+	// voice keeps playing its old sample, quieter each sample, and only frees
+	// itself when it reaches zero.
+	//
+	// A fade-in alone cannot fix a steal: the discontinuity is on the OUTGOING
+	// voice, which was stopping dead mid-waveform. That is inaudible when the
+	// stolen voice was nearly finished and obvious when it was not — and
+	// stealing "least left" makes the second case the normal one for modes whose
+	// samples are all a similar length, like Geese.
+	int32_t  fadeOut;
 };
 
 /// Voices in the pool. Two per agent: the swarm modes fold twelve members onto

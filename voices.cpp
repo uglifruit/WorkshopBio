@@ -159,6 +159,7 @@ void VoiceBank::init(bool usePcm)
 		v.pcm = nullptr; v.pcmLen = 0; v.pcmIdx = 0; v.pcmFrac = 0; v.pcmInc = 65536;
 		v.agent = -1;              // free
 		v.release = kQ16One;
+		v.fadeOut = 0;
 		setPan(v, 2 + (i % kNumAgents) * 4);
 	}
 
@@ -275,6 +276,10 @@ void __not_in_flash_func(VoiceBank::note)(int i, Mode m, int32_t accent, int32_t
 	for (int k = 0; k < kNumVoices; k++)
 	{
 		if (v_[k].agent < 0) { slot = k; break; }
+		// A voice already fading out is the best thing to take: it is on its way
+		// to silence anyway, so cutting it short costs nothing audible. Without
+		// this the fades would occupy slots and shrink the effective pool.
+		if (v_[k].fadeOut > 0) { leastLeft = 0; oldestSlot = k; continue; }
 		// Which sounding voice has the LEAST LEFT to play?
 		//
 		// This used to compare how far each voice had got, which is wrong when
@@ -290,7 +295,28 @@ void __not_in_flash_func(VoiceBank::note)(int i, Mode m, int32_t accent, int32_t
 			: static_cast<uint32_t>(v_[k].env);
 		if (left <= leastLeft) { leastLeft = left; oldestSlot = k; }
 	}
-	if (slot < 0) slot = oldestSlot;
+	if (slot < 0)
+	{
+		// Nothing free. Hand the chosen victim a 4ms fade-out and let it keep
+		// sounding into the new note, rather than cutting it dead — the outgoing
+		// discontinuity is the click, and a fade-in on the new voice cannot hide
+		// it. It frees itself once the fade completes.
+		//
+		// The new note takes the same slot only if the victim is ALREADY fading
+		// (nothing left to lose); otherwise it takes the next slot along, so the
+		// two genuinely overlap for those 4ms.
+		if (v_[oldestSlot].fadeOut > 0)
+		{
+			slot = oldestSlot;
+		}
+		else
+		{
+			v_[oldestSlot].fadeOut = kQ16One;
+			slot = (oldestSlot + 1) % kNumVoices;
+			// If that one is live too, it is the least-bad remaining choice; take
+			// it outright rather than cascading fades through the whole pool.
+		}
+	}
 
 	Voice &v = v_[slot];
 	v.agent = static_cast<int8_t>(i);
@@ -329,6 +355,7 @@ void __not_in_flash_func(VoiceBank::note)(int i, Mode m, int32_t accent, int32_t
 		v.pcmLen = sampleLen_[mi][v.variant];
 		v.pcmIdx = 0;
 		v.pcmFrac = 0;
+		v.fadeOut = 0;              // this voice is starting, not ending
 
 		// Start the fade-in from silence. Recordings are trimmed to their attack
 		// so they begin at a non-zero amplitude, and starting one abruptly in a
@@ -643,7 +670,9 @@ void __not_in_flash_func(VoiceBank::render)(int active, int16_t &l, int16_t &r)
 				// byte. That step is what was heard as truncation.
 				if (v.release < kQ16One)
 				{
-					v.release += kQ16One / 96;     // 96 samples = 2ms at 48kHz
+					// 4ms, up from 2. Matches the fade-OUT below so a steal is a
+					// symmetrical crossfade rather than a dip or a bump.
+					v.release += kQ16One / 192;    // 192 samples = 4ms at 48kHz
 					if (v.release > kQ16One) v.release = kQ16One;
 					// Plain 32-bit multiply, NOT mul_q16: that widens to int64
 					// and becomes an __aeabi_lmul call, which at one per voice
@@ -651,6 +680,22 @@ void __not_in_flash_func(VoiceBank::render)(int active, int16_t &l, int16_t &r)
 					// 2048 and release <= 65536, so the product peaks at 1.3e8
 					// with 16x headroom inside int32.
 					s = (s * v.release) >> 16;
+				}
+
+				// Stolen: ramp to silence over 4ms and then free the slot. Long
+				// enough to remove the step without smearing the new note that
+				// is already sounding alongside it.
+				if (v.fadeOut > 0)
+				{
+					v.fadeOut -= kQ16One / 192;    // 192 samples = 4ms at 48kHz
+					if (v.fadeOut <= 0)
+					{
+						v.fadeOut = 0;
+						v.agent = -1;
+						v.pcm = nullptr;
+						s = 0;
+					}
+					else s = (s * v.fadeOut) >> 16;
 				}
 			}
 			else
