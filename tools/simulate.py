@@ -467,10 +467,14 @@ def cicadas(physics, chaos, pop, ticks, spook_every=0, clock_period=0):
     pf = [0] * PATCHES
     fires = [0] * 4
     swarm = pop * SWARM_PER_AGENT
+    # A footstep is its OWN state, not a slam of fatigue: a fully fatigued
+    # insect still calls at a quarter rate, so the old spook read as a dip
+    # rather than a hush. Mirrors startle_ in engines.cpp.
+    startle = 0
     for t in range(ticks):
         if spook_every and t % spook_every == 0 and t:
-            for i in range(swarm):
-                fat[i] = Q
+            startle = Q
+        startle = decay(startle, 12)
         if clock_period and t % clock_period == 0 and t:
             for p in range(PATCHES):
                 pf[p] = min(pf[p] + Q // 4, Q)
@@ -484,6 +488,8 @@ def cicadas(physics, chaos, pop, ticks, spook_every=0, clock_period=0):
             rs = Q + mul_q16(mul_q16(drive, physics), Q) * 6
             hz = mul_q16(base << 4, rs) >> 4
             tired = Q - (fat[i] * 3 // 4)
+            if startle > 0:
+                tired = mul_q16(tired, Q - startle)
             my = mul_q16(mul_q16(hz, tem[i]), tired)
             if chaos:
                 rng, rb = rand_bipolar(rng)

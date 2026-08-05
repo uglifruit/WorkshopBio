@@ -143,6 +143,11 @@ private:
 	static constexpr int kPerPatch = kSwarmSize / kPatches;
 	int32_t  patchField_[kPatches]; // Q16 local loudness
 	int32_t  field_;                // Q16 mean across patches, for the CV out
+	// A footstep in the grass, Q16, decaying. SEPARATE from fatigue_ because the
+	// two are different things: fatigue slows a tired insect to a quarter rate
+	// and must stay that way, or the swells stop breathing. A startle stops the
+	// field dead. Overloading fatigue_ for both could only ever give one depth.
+	int32_t  startle_;
 	uint32_t rng_;
 };
 

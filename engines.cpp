@@ -847,6 +847,7 @@ void CicadasEngine::reset(uint32_t seed)
 {
 	rng_ = seed | 1u;
 	field_ = 0;
+	startle_ = 0;              // or the field opens silent after a mode change
 	for (int p = 0; p < kPatches; p++) patchField_[p] = 0;
 	for (int i = 0; i < kSwarmSize; i++)
 	{
@@ -876,8 +877,19 @@ void __not_in_flash_func(CicadasEngine::tick)(const Ctrl &c, EngineOut &out)
 	// Pulse In = a footstep in the grass: the whole field falls silent at once,
 	// then creeps back in as the insects regain their nerve. The inverse of the
 	// other modes' spooks, and the thing every cicada field actually does.
-	if (c.spook)
-		for (int i = 0; i < swarm; i++) fatigue_[i] = kQ16One;
+	//
+	// This used to slam fatigue_ to maximum, which was not nearly quiet enough:
+	// a fully fatigued insect still calls at a QUARTER rate, because fatigue is
+	// meant to thin the field during a swell rather than switch it off. Twelve
+	// insects at a quarter rate is still a chorus, so the footstep read as a dip.
+	//
+	// A startle is its own state, and it silences outright.
+	if (c.spook) startle_ = kQ16One;
+
+	// Nerve returns. Slower than the fatigue recovery so the hush is clearly a
+	// separate gesture from a swell trough, and slow enough to hear the field
+	// creep back in rather than snap on.
+	startle_ = fast_exp_decay(startle_, 12);
 
 	// Pulse In 2 nudges the field louder on each beat, so the swells lean
 	// toward an external tempo.
@@ -942,6 +954,9 @@ void __not_in_flash_func(CicadasEngine::tick)(const Ctrl &c, EngineOut &out)
 		// Fatigue slows an insect right down rather than silencing it outright,
 		// so the field thins out gradually instead of switching off.
 		int32_t tired = kQ16One - (fatigue_[i] - (fatigue_[i] >> 2));  // *3/4
+		// A startle multiplies on top, and unlike fatigue it goes all the way to
+		// zero - a footstep stops the field, it does not merely tire it.
+		if (startle_ > 0) tired = mul_q16(tired, kQ16One - startle_);
 		// Its own natural rate, then scaled by how tired it is. The per-insect
 		// tempo is what stops the twelve locking into unison.
 		int32_t myHz = mul_q16(mul_q16(hz_q8, tempo_[i]), tired);
