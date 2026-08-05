@@ -362,7 +362,7 @@ the mounted drive. On Windows, `cmake`/`ninja` live in `~/.pico-sdk/` and are no
 default PATH — see [CLAUDE.md](CLAUDE.md) for the exact invocation.
 
 ---
-## Use
+## Requirements and Help
 
 Runs on a Music Thing Modular Workshop System Computer. Built on the RP2040 with
 [ComputerCard](https://github.com/TomWhitwell/Workshop_Computer).
