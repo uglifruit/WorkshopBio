@@ -37,7 +37,17 @@ Runs on a Music Thing Modular Workshop System Computer. Built on the RP2040 with
 > The browser editor now maps a **pool** of uploaded files onto slots, so one
 > recording can be reused across ecosystems without being sent twice.
 >
-> The audio-reactive inputs remain untested against real signal levels.
+> Both audio inputs now work on hardware — and Audio In 1 never had, in any
+> firmware: its envelope was computed on one core and read on the other, with
+> nothing writing it across. Patch a pad into **Loudness** and the cicadas
+> recede while the geese get agitated; patch a drum into **Disturb** and every
+> ecosystem flinches on the transient.
+>
+> **Frogs synchronise again.** The knob mapped almost its whole travel to
+> coupling strengths that were already locked, so the chorus sounded the same
+> everywhere; the sync/chaos transition now sits in the middle of the sweep where
+> it can be played. And a footstep in the grass genuinely silences the cicadas
+> rather than thinning them.
 >
 > Why the card is the way it is — including the things that were wrong first — is
 > in [docs/DEVLOG.md](docs/DEVLOG.md).

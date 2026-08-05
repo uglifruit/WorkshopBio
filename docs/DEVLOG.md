@@ -1038,6 +1038,72 @@ whose whole purpose is to avoid an upload required one first.
 
 ---
 
+## Playing it: Frogs, the cicada footstep, and an input that never worked
+
+Four things came back from an hour with the card, and three were real defects.
+
+**Frogs felt uniform across Knob Main** — with population high and Main hard
+CCW the pond should lock into phase, and the knob felt much the same
+everywhere. Also remembered as having coupled properly once, which made it a
+regression to find rather than a design to invent.
+
+The model was fine. I checked the mean-field factorisation first, since it was
+the obvious suspect: identical to the direct O(n²) sum to three decimal places.
+Clock entrainment on Pulse In 2 also worked on hardware, and that needs the same
+coupling term.
+
+The knob-to-K mapping was the fault. Simulating the order parameter against K
+shows the pond is locked above K≈0.25 and scattered below K≈0.03 — **the entire
+audible transition is less than one octave of K.** Against that, the cube spent
+half the travel above K=0.125, all of it locked.
+
+The comment claimed cubing "pushes the transition into the middle of the sweep".
+It does the opposite: it compresses exactly the low-K region where all the
+behaviour lives. Reasoned backwards, and never checked against a sweep. Replaced
+with a geometric table so equal knob travel gives equal *ratios* of K.
+
+**The cicada footstep was a dip, not a hush.** It slammed `fatigue_` to maximum,
+which sounds like silence and is not — `tired` bottoms out at 0.25, so twelve
+insects kept calling at a quarter rate. That floor is right for fatigue, which
+has to *thin* the field during a swell rather than switch it off. A startle was
+simply never the same quantity, so it became its own state that multiplies to a
+true zero.
+
+**Audio In 1 did nothing at all, and never had in any firmware.** `listen()`
+computes the envelope on core 0; the engines read `gXC.loudness`. One read, zero
+writes anywhere in the tree. A casualty of Stage 3, where the physics moved to
+core 1 and `listen()` stayed behind — `crosscore.h` even names core 0 as the
+field's writer, and the writer was never written. Audio In 2 survived the same
+split only because it publishes an edge counter inline, which is exactly why
+Disturb worked and Loudness did not.
+
+### Two wrong tunings in a row, on a control that was a cliff
+
+Publishing the envelope exposed constants that had never once run against a
+non-zero input. Geese was fine. Cicadas took three attempts, and the first two
+were mine to have caught:
+
+| attempt | loudness → fatigue | result |
+|---|---|---|
+| original | `/40` | pins fatigue in 0.25 s — would have **muted** the field |
+| second | `/4000` | an order of magnitude below ambient drive — **inaudible** |
+| third | direct rate scale | proportional, and works |
+
+The lesson is not "pick a better constant". **No constant would have worked**,
+because fatigue is driven far harder by calling (0.25 per call) and ambient
+drive (~0.0017/tick), *and* it caps at ×0.25. Every value is either swamped or
+pinned. Scaling the call rate directly — beside the startle, where it is
+proportional and unbounded below — is the mechanism the feature always needed.
+
+I jumped from one end of that range to the other and called the second value a
+fix without checking it against the terms it was competing against. The
+arithmetic that showed the problem was three lines long, and I only ran it after
+hardware reported the effect was inaudible. **When a value has never run, the
+first thing to check is not the value but whether the path exists** — and the
+second is what else is writing the same variable.
+
+---
+
 ## Standing notes
 
 - **`tools/simulate.py` duplicates the C++ constants.** It will drift if
@@ -1053,8 +1119,13 @@ whose whole purpose is to avoid an upload required one first.
   physics fire must still complete in one 20.83 µs slot.
 - **Drone is gone.** It was the worst thing on the card at 674% of budget, and
   rather than optimise it the alt boot became Tuned — the same voices, undetuned.
-  308 lines deleted. The audio-reactive thresholds remain untested against real
-  signal levels.
+  308 lines deleted.
+- **Both audio inputs are now confirmed on hardware.** Disturb spooks every
+  ecosystem; Loudness agitates the geese and thins the cicadas. Audio In 1 had
+  never worked in any released firmware — see above.
+- **A constant that has never run is not a tuning, it is a guess.** Anything
+  gated behind a value that was always zero has never been heard, however
+  carefully it was reasoned about when written.
 - **Measure the mode you are asking about.** The six-mode sweep was Rhythm-only
   and said nothing about Drone, where the real defect was — and the tell came
   from someone listening, not from the numbers.
