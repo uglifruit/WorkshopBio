@@ -635,6 +635,33 @@ void __not_in_flash_func(WebUI::HandleSysex)(const uint8_t *msg, uint32_t len)
 		if (!uploading_) { SendErr(ERR_PROTOCOL); break; }
 		uploading_ = false;
 
+		// Drop baked references in modes that ended up with no uploaded audio.
+		//
+		// Such a slot is asking to play a built-in recording, which is exactly
+		// what an EMPTY slot already does - so the reference buys nothing, and a
+		// wrong one is worse than nothing: a cross-mode reference makes a mode
+		// nobody touched play another mode's recordings, and because the editor
+		// seeds its mapping from the card, it survives every reload. That is how
+		// Cicadas came to play hooves.
+		//
+		// Checked here rather than per message because only the finished header
+		// shows whether a mode has real audio: the references can arrive before
+		// the uploads they sit alongside.
+		for (int m = 0; m < kNumModes; m++)
+		{
+			bool haveAudio = false;
+			for (int v = 0; v < kNumVariants; v++)
+				if (hdr_.size[m][v] != 0 && !(hdr_.size[m][v] & kBakedFlag))
+					{ haveAudio = true; break; }
+			if (haveAudio) continue;
+			for (int v = 0; v < kNumVariants; v++)
+				if (hdr_.size[m][v] & kBakedFlag)
+				{
+					hdr_.offset[m][v] = 0;
+					hdr_.size[m][v]   = 0;
+				}
+		}
+
 		// Ack and push it out BEFORE any of this touches flash. Once the write
 		// starts, USB is gone -- TinyUSB's stack and its USBCTRL_IRQ handler live
 		// in flash -- so this is the last chance to say anything to the browser.

@@ -503,8 +503,21 @@ async function connect() {
         if (state.slots[key] === undefined) state.slots[key] = `k${off}`;
 
       // Slots the card is pointing at a built-in recording.
-      for (const [key, { bm, bv }] of Object.entries(state.onCardBaked))
-        if (state.slots[key] === undefined) state.slots[key] = `b${bm}:${bv}`;
+      //
+      // A mode with no uploaded audio of its own should not be holding these at
+      // all - an empty slot already plays its own built-in. Older firmware wrote
+      // cross-mode references into untouched modes, so a card can still carry
+      // them; showing them as the mode's mapping would make the page repeat a
+      // fault instead of reporting one. Show the mode's OWN built-in instead,
+      // which is what it will play once the stale reference is cleared.
+      const uploadedModes = new Set(
+        Object.keys(state.onCardSlots).map(k => Number(k.split(":")[0])));
+      for (const [key, { bm, bv }] of Object.entries(state.onCardBaked)) {
+        if (state.slots[key] !== undefined) continue;
+        const km = Number(key.split(":")[0]);
+        state.slots[key] = uploadedModes.has(km) ? `b${bm}:${bv}` : undefined;
+        if (state.slots[key] === undefined) delete state.slots[key];
+      }
 
       // Any slot the card has NOT been given a recording for is playing its own
       // built-in one, so show that rather than "none" - the page should open as
@@ -596,16 +609,20 @@ async function sync(sendAudio) {
     const [mode, variant] = key.split(":").map(Number);
     if (typeof val === "string" && val[0] === "b") {
       const [bm, bv] = val.slice(1).split(":").map(Number);
-      // A slot pointing at its OWN built-in recording is only worth sending if
-      // its mode has other uploads. With none, it is exactly what the card does
-      // for an empty slot, so writing it changes nothing - and that is how
-      // replacing two horse samples wrote baked references into all 48 slots
-      // and produced five phantom 0 KB "recordings".
+      // A mode with NO uploads of its own needs no baked references at all:
+      // an empty slot already plays that mode's built-in recording, so writing
+      // one changes nothing on the card and only adds a way to be wrong.
+      //
+      // The test used to be "skip if it points at its OWN mode and variant",
+      // which let a CROSS-mode reference through - and the page seeds slots
+      // from the card, so one bad reference round-tripped forever. That is how
+      // Cicadas 3 ended up pointing at built-in Horses 3 and playing hooves in
+      // a mode that had never been touched.
       //
       // With uploads in the mode it MUST be sent: the card ignores a mode's
       // built-ins entirely once any slot of it is uploaded, so an unsent slot
       // silently drops out of the round robin even though the page shows it.
-      if (bm === mode && bv === variant && !modeUploads.has(mode)) continue;
+      if (!modeUploads.has(mode)) continue;
       bakedRefs.push({ mode, variant, srcMode: bm, srcVariant: bv });
       continue;
     }
