@@ -469,7 +469,18 @@ async function connect() {
       for (let m = 0; m < MODES.length; m++) {
         for (let half = 0; half < 2; half++) {
           send([MSG.SLOTINFO, m, half]);
-          const det = await waitAck(1500).catch(() => null);
+          // Keep reading until the SLOTDET arrives. Anything else in the queue -
+          // a late ack, an error from an earlier message - must be DISCARDED
+          // rather than counted as this request's answer: consuming one reply
+          // per request regardless of what it was left every later reply shifted
+          // by one, and the last request with nothing at all. That silently lost
+          // one half of one mode, so a sample in a high slot vanished from the
+          // page while the card went on playing it.
+          let det = null;
+          for (let tries = 0; tries < 4; tries++) {
+            det = await waitAck(1500).catch(() => null);
+            if (!det || det[2] === MSG.SLOTDET) break;
+          }
           if (!det || det[2] !== MSG.SLOTDET) continue;
           // Key on the mode the CARD reported, not the one we asked for. The
           // receiver queues replies, so one arriving late lands under whatever
@@ -478,7 +489,7 @@ async function connect() {
           const rm = det[3];
           const nv = det[5];
           const v0 = det[4] * nv;
-          if (rm >= MODES.length) continue;
+          if (rm >= MODES.length || det[4] > 1 || nv < 1) continue;
           for (let i = 0; i < nv; i++) {
             const b = 6 + i * 6;
             const off = (det[b] << 14) | (det[b+1] << 7) | det[b+2];
