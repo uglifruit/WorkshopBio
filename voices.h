@@ -1,8 +1,12 @@
-// voices.h — the audio side: four voices rendered and placed at 48kHz.
+// voices.h — the audio side: a pool of voices rendered and placed at 48kHz.
 //
 // Two backends. The synthesized one is always available; the PCM one plays
-// baked-in samples and is selected by holding the momentary switch at power-on
-// (and only if samples were baked into the build).
+// baked-in or uploaded samples.
+//
+// Holding the momentary switch at power-on selects TUNED mode, which plays those
+// recordings at their own pitch: no per-agent body size, no per-hit wobble. The
+// card otherwise assumes every sample is a creature and detunes accordingly,
+// which is right for a flock and wrong for anything pitched.
 //
 // Both back-ends use ROUND ROBINS: every trigger picks a variant, and the
 // variant means something per mode — which hoof, which bird, which species —
@@ -92,48 +96,6 @@ struct Voice
 /// still sounding — Geese can retrigger at ~56ms against samples of 137-222ms.
 constexpr int kNumVoices = kNumAgents * 2;
 
-/// Grains per agent in Drone boot. Must be at least as large as the heaviest
-/// overlap any mode asks for, or the round-robin steals grains that are still
-/// playing and the texture chops. Eight covers the densest mode with headroom;
-/// four voices x eight grains is still only 32 concurrent readers, which is
-/// cheap (a pointer, a position and a rate each).
-constexpr int kNumGrains = 8;
-
-/// One grain: a playing copy of an animal recording.
-struct Grain
-{
-	const int8_t *pcm;
-	uint32_t len;
-	uint32_t pos;      // Q16 position within the sample
-	uint32_t inc;      // Q16 playback rate
-	int32_t  level;    // Q16 gain for this grain
-	// Reciprocal of the window half-length, Q16. The triangular window needs
-	// dist/half every sample, and len never changes once the grain launches --
-	// so the divide is hoisted to launch and the render loop multiplies. The
-	// M0+ has no divider, so this was a libgcc call per grain per sample:
-	// 32 of them at 48kHz, which measured 17546 cycles against a 2604 budget.
-	uint32_t invHalf;
-	bool     active;
-};
-
-/// One Drone voice: several overlapping grains of the SAME animal recordings
-/// the Rhythm card fires as one-shots.
-///
-/// The first version of this mode used saw oscillators whose pitch followed the
-/// engine state. That was a mistake: most engines put a PHASE RAMP in state[],
-/// so the pitch swept upward and snapped back, forever. It sounded like a broken
-/// synth rather than an ecosystem, and none of the sample library was used.
-struct DroneVoice
-{
-	Grain    g[kNumGrains];
-	int32_t  level;      // Q16, slewed overall amplitude
-	int32_t  density;    // Q16, how often new grains are launched
-	int32_t  spread;     // Q16, pitch spread across grains
-	int32_t  countdown;  // control ticks until the next grain
-	uint8_t  next;       // round-robin grain slot
-	uint32_t rng;
-};
-
 class VoiceBank
 {
 public:
@@ -152,19 +114,6 @@ public:
 	/// Render one sample of all voices, summed and panned into L/R.
 	void render(int active, int16_t &l, int16_t &r);
 
-	/// Drone boot: hand the engine's continuous state to the drone voices. Call
-	/// once per control tick; `triggers` still marks events, which the drone
-	/// uses as accents rather than as note-ons.
-	void droneUpdate(Mode m, const int32_t *state, int32_t global,
-	                 uint8_t triggers, int active, int32_t timbre);
-
-	/// Drone boot: render one sample of the sustained voices.
-	void droneRender(int active, int16_t &l, int16_t &r);
-
-	/// Drone boot: how thick voice `i`'s texture currently is, Q16. Goes out on
-	/// the CV outs so the control side describes the same thing you hear.
-	int32_t droneDensity(int i) const { return d_[i].density; }
-
 	bool usingPcm() const { return usePcm_; }
 
 private:
@@ -177,7 +126,6 @@ private:
 	// free, so the cost is RAM we have; the constraint was always CPU, and the
 	// core-1 split left core 0 with headroom (Total 2209 of 2604).
 	Voice v_[kNumVoices];
-	DroneVoice d_[kNumAgents];
 	uint8_t lastVariant_[kNumAgents];  // for no-immediate-repeat
 	uint32_t rng_ = 0x9E3779B9u;
 

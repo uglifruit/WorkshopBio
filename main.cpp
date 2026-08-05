@@ -47,8 +47,8 @@ static constexpr int kGateSamples = 240;
 static constexpr int kBootWindowSamples = 48000 / 2;   // ~0.5s
 
 // After booting, announce the mode on the LEDs for a moment: Rhythm lights the
-// left column, Drone the right. Without this the only way to tell the modes
-// apart is by ear, and a Drone patch is easily mistaken for broken samples.
+// left column, Tuned the right. Without this the only way to tell them apart is
+// by ear, and the difference is subtle until you hear a pitched sample held.
 static constexpr int kSplashSamples = 48000;           // ~1s
 
 // How long the momentary switch must be held to hand the card over to USB.
@@ -124,10 +124,11 @@ public:
 				// 1.5kHz phase instead of letting it drift after a stall.
 				lastSample += owed * kCtrlDiv;
 
-				// The physics. Drone still ticks on core 0 for now (Stage 4
-				// moves it), so this only runs for Rhythm.
-				if (gXC.bootMode != static_cast<uint8_t>(BootMode::Drone))
-					for (uint32_t n = 0; n < owed; n++) gCard->physicsTick();
+				// The physics, for BOTH boot modes. Alt boot used to run its
+				// whole tick inline on core 0 because it needed a different
+				// renderer; now it is the same ecosystem with different output
+				// routing, so it takes the same path.
+				for (uint32_t n = 0; n < owed; n++) gCard->physicsTick();
 			}
 		}
 
@@ -301,8 +302,7 @@ public:
 		int16_t l, r;
 		{
 			BIO_PROFILE_SCOPE(Voices);
-			if (boot_ == BootMode::Drone) voices_.droneRender(population_, l, r);
-			else                          voices_.render(population_, l, r);
+			voices_.render(population_, l, r);
 		}
 		AudioOut1(l);
 		AudioOut2(r);
@@ -473,102 +473,12 @@ private:
 		//   - applying the gate/CV targets core 1 published
 		// Everything else crosses through gXC and gTrig.
 		//
-		// EXCEPT Drone, which still runs the whole old path here. Stage 4 moves
-		// it; keeping both alive for one stage is the price of a step that can be
-		// flashed and measured on its own.
-		if (boot_ == BootMode::Drone) { droneControlTick(); return; }
-
 		// Note-ons are drained one per sample elsewhere, so this tick only
 		// applies the gate and CV decisions core 1 made.
 		applyOutputTargets();
 	}
 
 private:
-	// -------------------------------------------------------------------
-	/// Drone's control tick, still on core 0 and still inline in the interrupt.
-	///
-	/// Stage 4 moves this to the split. It is kept whole and separate rather than
-	/// threaded through physicsTick() with conditionals, so Stage 3 changes
-	/// exactly one thing — Rhythm — and Drone's numbers stay comparable.
-	void __not_in_flash_func(droneControlTick)()
-	{
-		// Consume the mode-change request HERE, because in alt boot core 1 skips
-		// physicsTick() entirely — so the consumer that normally handles this
-		// never runs, and a tap did nothing at all. The card was stuck on Horses
-		// for the whole session. Introduced when mode ownership moved to core 1
-		// and Drone was left on the old core-0 path.
-		uint32_t mc = gXC.modeCycleReq;
-		if (mc != lastModeReq_)
-		{
-			lastModeReq_ = mc;
-			mode_ = static_cast<uint8_t>((mode_ + 1) % kNumModes);
-			engines_[mode_]->reset(seed_ ^ (mode_ * 2654435761u));
-			gXC.mode = mode_;
-		}
-
-		int32_t physics = knob_to_q16(KnobVal(Knob::Main));
-		if (Connected(Input::CV1)) physics += CVIn1() << 4;
-		physics = clampQ16(physics);
-
-		int32_t popRaw = knob_to_q16(KnobVal(Knob::X));
-		if (Connected(Input::CV2)) popRaw += CVIn2() << 4;
-		popRaw = clampQ16(popRaw);
-
-		if (clockAge_ < 3 * kCtrlRate) clockAge_++;
-		else clockPeriod_ = 0;
-
-		if (clockPending_)
-		{
-			if (clockAge_ >= 2 && clockAge_ < 3 * kCtrlRate) clockPeriod_ = clockAge_;
-			clockAge_ = 0;
-		}
-
-		Ctrl c;
-		c.physics     = physics;
-		c.chaos       = knob_to_q16(KnobVal(Knob::Y));
-		c.population  = 1 + (popRaw * kNumAgents - 1) / kQ16One;
-		if (c.population < 1) c.population = 1;
-		if (c.population > kNumAgents) c.population = kNumAgents;
-		c.spook       = spookPending_ || startle_;
-		c.clock       = clockPending_;
-		c.clockPeriod = clockPeriod_;
-		c.loudness    = loudness_;
-		spookPending_ = false;
-		clockPending_ = false;
-		startle_      = false;
-		population_   = c.population;
-
-		EngineOut out;
-		out.triggers = 0;
-		out.global = 0;
-		for (int i = 0; i < kNumAgents; i++) { out.state[i] = 0; out.member[i] = 0; }
-		engines_[mode_]->tick(c, out);
-
-		uint8_t mask = out.triggers & static_cast<uint8_t>((1 << c.population) - 1);
-
-		Mode m = static_cast<Mode>(mode_);
-		voices_.droneUpdate(m, out.state, out.global, mask, c.population, c.chaos);
-
-		// Drone pairs each gate with the DENSITY of the texture it came from, so
-		// the audio out and the control outs describe the same thing.
-		if (routing_ == Routing::Discrete)
-		{
-			if (mask) pulseTimer_[0] = kGateSamples;
-			cvLevel_[0] = voices_.droneDensity(0);
-			cvLevel_[1] = out.global;
-		}
-		else
-		{
-			if (mask & 0b0001) pulseTimer_[0] = kGateSamples;
-			if (mask & 0b0010) pulseTimer_[1] = kGateSamples;
-			cvLevel_[0] = voices_.droneDensity(0);
-			cvLevel_[1] = voices_.droneDensity(1);
-		}
-
-		if (mask) activity_ = kQ16One;
-		seed_ = seed_ * 1664525u + 1013904223u;
-	}
-
 	// -------------------------------------------------------------------
 	/// Turn queued note-ons into voices. Runs on core 0 at the control rate.
 	///
@@ -577,7 +487,6 @@ private:
 	/// move to core 1 whatever the timing says. The ring is what crosses instead.
 	void __not_in_flash_func(drainOneTrigger)()
 	{
-		if (boot_ == BootMode::Drone) return;   // Drone still ticks on core 0
 		if (gTrig.tail == gTrig.head) return;
 
 		TrigWord w = gTrig.slot[gTrig.tail & (kTrigRingSize - 1)];
@@ -590,8 +499,6 @@ private:
 	/// Copy the gate and CV decisions core 1 made onto core 0's own timers.
 	void __not_in_flash_func(applyOutputTargets)()
 	{
-		if (boot_ == BootMode::Drone) return;   // Drone still ticks on core 0
-
 		population_ = gXC.population;
 		routing_    = static_cast<Routing>(gXC.routing);
 
@@ -731,7 +638,37 @@ public:
 		int32_t cv0 = gXC.cvTarget[0], cv1 = gXC.cvTarget[1];
 
 		Routing routing = static_cast<Routing>(gXC.routing);
-		if (routing == Routing::Discrete)
+
+		if (gXC.bootMode == static_cast<uint8_t>(BootMode::Drone))
+		{
+			// ALT BOOT is the same ecosystem playing the same samples, but as an
+			// INSTRUMENT rather than a menagerie: nothing detunes the recordings
+			// (see VoiceBank's `tuned`), so uploading four notes lets Horses
+			// gallop them and Rain drip them.
+			//
+			// Both CV outs are therefore continuous, always — a mode meant for
+			// pitched material should not have half its control outputs firing
+			// blips. They carry two genuinely independent things:
+			//   CV 1 = how BUSY the ecosystem is (smoothed trigger density)
+			//   CV 2 = what the ecosystem is DOING (the engine's own global:
+			//          Frogs' Kuramoto coherence, Cicadas' field loudness,
+			//          Geese's flock agitation, Rain's total water...)
+			if (routing == Routing::Discrete)
+			{
+				// Agents 1 and 2 on their own pulse outs.
+				if (mask & 0b0001) pulseArm |= 1;
+				if (mask & 0b0010) pulseArm |= 2;
+			}
+			else
+			{
+				// Everything OR'd onto Pulse 1, clusters accented on Pulse 2.
+				if (mask) pulseArm |= 1;
+				if (popcount4(mask) >= 2) pulseArm |= 2;
+			}
+			cv0 = gXC.density;
+			cv1 = out.global;
+		}
+		else if (routing == Routing::Discrete)
 		{
 			if (mask & 0b0001) pulseArm |= 1;
 			if (mask & 0b0010) pulseArm |= 2;
@@ -764,6 +701,18 @@ public:
 		// level: core 0's uiTick owns the decay, so nothing shares a mutable
 		// brightness between the cores.
 		if (mask) gXC.activitySeq = gXC.activitySeq + 1;
+
+		// Smoothed trigger density for CV 1. Each firing agent pushes it up;
+		// it leaks away continuously, so a busy patch sits high and a sparse one
+		// hovers near zero. Shift 7 at the 1.5kHz control rate is a time constant
+		// of about 85ms — fast enough to follow a cascade, slow enough that it
+		// reads as a control voltage rather than a stream of blips.
+		int32_t d = density_;
+		d += (popcount4(mask) * (kQ16One / 4) - d) >> 7;
+		if (d < 0) d = 0;
+		if (d > kQ16One) d = kQ16One;
+		density_ = d;
+		gXC.density = d;
 
 		seed_ = seed_ * 1664525u + 1013904223u;
 	}
@@ -1005,6 +954,8 @@ public:
 	bool     startle_      = false;
 	BootMode boot_         = BootMode::Rhythm;
 	int32_t  activity_   = 0;
+	// Smoothed trigger density, core-1 private; published as gXC.density.
+	int32_t  density_    = 0;
 	uint32_t seed_       = 0xC0FFEEu;
 
 	int      pulseTimer_[2] = { 0, 0 };

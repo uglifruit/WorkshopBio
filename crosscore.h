@@ -145,6 +145,12 @@ struct CrossCore
 	/// level; nothing shares a mutable brightness.
 	volatile uint32_t activitySeq;
 
+	/// Smoothed trigger density, Q16 — how BUSY the ecosystem is, independent of
+	/// what it is doing. Goes to CV 1 in alt boot. Decays far more slowly than
+	/// the LED activity glow, which is tuned to flash per hit; this has to read
+	/// as a continuous control voltage over seconds.
+	volatile int32_t  density;
+
 	/// Perf meters, both read out over SysEx with the profile buckets.
 	/// maxBacklog is the worst number of ticks core 1 ever owed at once: 1 is
 	/// healthy, a steady 2+ means the engine is taking longer than one control
