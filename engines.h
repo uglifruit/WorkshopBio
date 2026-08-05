@@ -25,6 +25,10 @@ private:
 	// horse — turning the knob up added nothing at all.
 	uint32_t stride_[kNumAgents];     // one stride clock per horse
 	int32_t  speed_[kNumAgents];      // per-horse rate offset, Q16 around 1.0
+	// How closely the herd is in step, Q16, smoothed. global used to be the lead
+	// horse's raw stride phase - a ramp on a CV out that every other mode uses
+	// for a level.
+	int32_t  herdSync_;
 	int32_t  jitter_[kNumAgents][kNumAgents];  // [horse][hoof] timing offset
 	uint8_t  lastStep_[kNumAgents][kNumAgents];
 	// Countdown for the second foot of a "simultaneous" pair, so trot and
@@ -64,6 +68,11 @@ private:
 	// Kuramoto order parameter is far more legible with a real population.
 	uint32_t phase_[kSwarmSize];
 	int32_t  natural_[kSwarmSize];  // per-frog natural frequency increment
+	// Per-agent croak envelope, Q16: rises when that group calls and decays
+	// between. state[] used to carry the lead frog's raw PHASE, which is a
+	// sawtooth rather than anything about the pond, and every other engine puts
+	// a level there.
+	int32_t  croak_[kNumAgents];
 	uint32_t clockPhase_;           // phantom oscillator tracking Pulse In 2
 	uint32_t rng_;
 };

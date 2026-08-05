@@ -102,6 +102,7 @@ void HorsesEngine::reset(uint32_t seed)
 {
 	rng_ = seed | 1u;
 	lastGait_ = 0xFF;
+	herdSync_ = 0;
 	for (int h = 0; h < kNumAgents; h++)
 	{
 		// Stagger the herd's starting positions so they don't begin in unison.
@@ -223,8 +224,44 @@ void __not_in_flash_func(HorsesEngine::tick)(const Ctrl &c, EngineOut &out)
 		out.state[h] = static_cast<int32_t>(stride_[h] >> 16);
 	}
 
-	// Global: the lead horse's stride, a reference for the whole herd.
-	out.global = static_cast<int32_t>(stride_[0] >> 16);
+	// Global: HERD SYNC — how closely the animals are in step, 65536 = moving as
+	// one, 0 = evenly scattered around the stride.
+	//
+	// This used to be the lead horse's raw stride phase, which is a sawtooth: a
+	// ramp on a CV out that carries a LEVEL in every other mode, and the reason
+	// CV 2 was seen ramping. The stride LFO is still available per-animal on
+	// state[], where it is deliberate and useful.
+	//
+	// Same order-parameter idea Frogs uses, on the same fast_sin LUT: sum the
+	// unit vectors of each stride phase and take the length of the mean. Four
+	// agents at the control rate, so the cost is negligible.
+	{
+		int32_t sumSin = 0, sumCos = 0;
+		int n = 0;
+		for (int h = 0; h < c.population && h < kNumAgents; h++)
+		{
+			sumSin += fast_sin(stride_[h]);
+			sumCos += fast_sin(stride_[h] + 0x40000000u);   // +90 degrees
+			n++;
+		}
+		int32_t sync = kQ16One;
+		if (n > 1)
+		{
+			int32_t as = (sumSin > 0) ? sumSin : -sumSin;
+			int32_t ac = (sumCos > 0) ? sumCos : -sumCos;
+			int32_t hi = (as > ac) ? as : ac;
+			int32_t lo = (as > ac) ? ac : as;
+			// Octagonal |v| ~ max + 3/8*min, avoiding a sqrt. fast_sin is Q15
+			// (+/-32767), so the mean is Q15 and one shift takes it to Q16.
+			int32_t mag = hi + ((lo * 3) >> 3);
+			sync = (mag / n) << 1;
+			if (sync > kQ16One) sync = kQ16One;
+		}
+		// Smoothed: the raw figure jitters as individual hooves land, and this is
+		// a CV describing the herd rather than a per-step readout.
+		herdSync_ = slew(herdSync_, sync, 4);
+		out.global = herdSync_;
+	}
 }
 
 // ===========================================================================
@@ -373,6 +410,7 @@ void FrogsEngine::reset(uint32_t seed)
 {
 	rng_ = seed | 1u;
 	clockPhase_ = 0;
+	for (int i = 0; i < kNumAgents; i++) croak_[i] = 0;
 	for (int i = 0; i < kSwarmSize; i++)
 	{
 		phase_[i] = xorshift32(rng_);
@@ -493,10 +531,19 @@ void __not_in_flash_func(FrogsEngine::tick)(const Ctrl &c, EngineOut &out)
 	// and carries that group's lead frog's phase as state CV.
 	for (int a = 0; a < kNumAgents; a++)
 	{
-		if (a >= c.population) { out.state[a] = 0; continue; }
+		if (a >= c.population) { out.state[a] = 0; croak_[a] = 0; continue; }
+		bool any = false;
 		for (int k = 0; k < kSwarmPerAgent; k++)
-			if (fired & (1u << (a * kSwarmPerAgent + k))) out.triggers |= (1 << a);
-		out.state[a] = static_cast<int32_t>(phase_[a * kSwarmPerAgent] >> 16);
+			if (fired & (1u << (a * kSwarmPerAgent + k)))
+				{ out.triggers |= (1 << a); any = true; }
+
+		// CROAK envelope, not the lead frog's phase. The phase was a sawtooth
+		// that told you nothing about the pond; this rises when the group calls
+		// and falls between, so the CV describes how vocal that group is - the
+		// same KIND of quantity every other engine puts in state[].
+		if (any) croak_[a] = kQ16One;
+		else     croak_[a] = fast_exp_decay(croak_[a], 5);
+		out.state[a] = croak_[a];
 	}
 
 	// Global = the Kuramoto order parameter, which the mean-field sums give us
