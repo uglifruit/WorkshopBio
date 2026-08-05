@@ -556,6 +556,11 @@ async function connect() {
       setStatus("Connected, but the card did not identify itself.", "err");
     }
     document.getElementById("upload").disabled = false;
+    // Enabled on CONNECT, not after a sync. "Update mapping" only rewrites the
+    // header, so a connected card is all it needs - and changing nothing but a
+    // mapping is exactly the case where no upload has happened, which is when
+    // it used to be the one button still greyed out.
+    document.getElementById("remap").disabled = false;
     document.getElementById("prof").disabled = false;
     document.getElementById("play").disabled = false;
   } catch (e) {
@@ -690,7 +695,13 @@ async function sync(sendAudio) {
   const prog = document.getElementById("prog");
   prog.hidden = false; prog.value = 0;
   document.getElementById("upload").disabled = true;
+  document.getElementById("remap").disabled = true;
   setStatus("Syncing… the card keeps playing until the last chunk arrives.");
+
+  // Set once the sync has committed and the card is on its way to rebooting.
+  // A failure leaves it false, so the buttons come back and the sync can be
+  // retried without reconnecting.
+  let rebooted = false;
 
   try {
     // The card now erases only the sectors this upload needs, not the whole 1MB,
@@ -776,11 +787,15 @@ async function sync(sendAudio) {
 
     document.getElementById("revert").disabled = false;
     document.getElementById("connect").disabled = false;
+    // The card has gone to reboot, so nothing that talks to it should be live
+    // until Connect finds it again. Re-enabling these unconditionally in the
+    // finally left them pointing at a card that was no longer there.
+    rebooted = true;
   } catch (e) {
     setStatus("Sync failed: " + e.message, "err");
   } finally {
-    document.getElementById("upload").disabled = false;
-    document.getElementById("remap").disabled = false;
+    document.getElementById("upload").disabled = rebooted;
+    document.getElementById("remap").disabled = rebooted;
   }
 }
 
