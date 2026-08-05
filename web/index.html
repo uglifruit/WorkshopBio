@@ -240,7 +240,8 @@ const SR = 48000;
 //          once and points both slots at it, so reuse is free.
 // onCard = what the card reports it is actually playing, per mode
 const state = { midiOut:null, midiIn:null, pool:[], slots:{}, info:null,
-                onCard:null, onCardSlots:{}, onCardBaked:{} };
+                onCard:null, onCardSlots:{}, onCardBaked:{},
+                bakedCount:[] };
 
 // --- audio conversion ------------------------------------------------------
 
@@ -448,9 +449,15 @@ async function connect() {
       const sl = await waitAck(1500).catch(() => null);
       if (sl && sl[2] === MSG.SLOTS) {
         const nm = sl[3];
+        // Three bytes per mode now: two septets of the filled-slot bitmask,
+        // then how many DISTINCT built-in recordings that mode really has.
+        // Meteors ships five for eight slots, so "8 variants" was wrong.
         state.onCard = [];
-        for (let m = 0; m < nm; m++)
-          state.onCard.push(sl[4 + m*2] | (sl[5 + m*2] << 7));
+        state.bakedCount = [];
+        for (let m = 0; m < nm; m++) {
+          state.onCard.push(sl[4 + m*3] | (sl[5 + m*3] << 7));
+          state.bakedCount.push(sl[6 + m*3]);
+        }
       }
       // Pull per-slot detail so the page can show what is ON THE CARD after a
       // reboot, not just what this session loaded. Slots sharing an offset are
@@ -464,8 +471,14 @@ async function connect() {
           send([MSG.SLOTINFO, m, half]);
           const det = await waitAck(1500).catch(() => null);
           if (!det || det[2] !== MSG.SLOTDET) continue;
+          // Key on the mode the CARD reported, not the one we asked for. The
+          // receiver queues replies, so one arriving late lands under whatever
+          // request is in flight - which is how samples loaded into Geese
+          // reappeared in Rain.
+          const rm = det[3];
           const nv = det[5];
           const v0 = det[4] * nv;
+          if (rm >= MODES.length) continue;
           for (let i = 0; i < nv; i++) {
             const b = 6 + i * 6;
             const off = (det[b] << 14) | (det[b+1] << 7) | det[b+2];
@@ -475,9 +488,9 @@ async function connect() {
             // onCardSlots, which is about audio the card is STORING - a baked
             // reference occupies no user memory and is not a USER entry.
             if (off === 0x1FFFFF)
-              state.onCardBaked[`${m}:${v0 + i}`] = { bm: sz >> 8, bv: sz & 0xFF };
+              state.onCardBaked[`${rm}:${v0 + i}`] = { bm: sz >> 8, bv: sz & 0xFF };
             else if (sz > 0)
-              state.onCardSlots[`${m}:${v0 + i}`] = { off, sz };
+              state.onCardSlots[`${rm}:${v0 + i}`] = { off, sz };
           }
         }
       }
@@ -502,7 +515,12 @@ async function connect() {
         const modeHasUploads = Object.keys(state.onCardSlots)
                                      .some(k => k.startsWith(`${mi}:`));
         if (modeHasUploads) return;
-        for (let v = 0; v < count; v++)
+        // Only up to the mode's REAL count: seeding Meteors 6-8 would point at
+        // padding, which is the same audio as 1-3 and would show the round robin
+        // as eight when the card only has five recordings.
+        const real = Math.min(count,
+          (state.bakedCount && state.bakedCount[mi]) || count);
+        for (let v = 0; v < real; v++)
           if (state.slots[`${mi}:${v}`] === undefined)
             state.slots[`${mi}:${v}`] = `b${mi}:${v}`;
       });
@@ -985,11 +1003,16 @@ function refreshSelects() {
       // Three kinds of entry: nothing, one of YOUR files, or one of the card's
       // own recordings — which can come from ANY mode, so the built-in horse
       // hoof can be Geese 1 without uploading anything.
-      const baked = MODES.map(([bn, , bc], bm) =>
-        `<optgroup label="Built-in ${bn}">` +
-        Array.from({ length: bc }, (_, bv) =>
-          `<option value="b${bm}:${bv}">${bn} ${bv + 1}</option>`).join("") +
-        `</optgroup>`).join("");
+      // Only as many built-in entries as the mode actually HAS. Slots are padded
+      // by repetition when a mode ships fewer than eight, so offering all eight
+      // let you pick Meteors 6 and get Meteors 1 without being told.
+      const baked = MODES.map(([bn, , bc], bm) => {
+        const n = (state.bakedCount && state.bakedCount[bm]) || bc;
+        return `<optgroup label="Built-in ${bn}">` +
+          Array.from({ length: Math.min(n, bc) }, (_, bv) =>
+            `<option value="b${bm}:${bv}">${bn} ${bv + 1}</option>`).join("") +
+          `</optgroup>`;
+      }).join("");
       // Audio already on the card for THIS slot, so a reload can show it and a
       // sync can keep it. Grouped by the offsets actually in use, since two
       // slots sharing an offset share one recording.
@@ -1147,12 +1170,20 @@ function updateUsage() {
       // refreshSelects()'s job alone.
     }
 
-    const staged = Object.keys(state.slots)
-                         .filter(k => k.startsWith(`${mi}:`)).length;
+    // What will play AFTER a sync: every slot of this mode that names anything.
+    // Counting "staged" and adding it to what is already on the card
+    // double-counted, because the page seeds the slots the card already holds -
+    // so eight slots read as "will add 8, 16 in the rotation".
+    let willPlay = 0, sending = 0;
+    for (let v = 0; v < count; v++) {
+      const val = state.slots[`${mi}:${v}`];
+      if (val === undefined) continue;
+      willPlay++;
+      if (typeof val === "string" && val[0] === "p") sending++;
+    }
+
     // HORSES IS NOT A ROUND ROBIN. Its four variants are the four hooves, picked
-    // by which foot actually landed, so it always uses all four and a partial
-    // upload simply falls back to the built-in hoof for the slots left empty.
-    // Saying "will play only these two" there would be plain wrong.
+    // by which foot actually landed, so it always uses all four.
     const hooves = (mi === 0);
 
     let cardLine;
@@ -1167,21 +1198,21 @@ function updateUsage() {
                  `4 hooves replaced; the rest use the built-in ones.</span>`;
     } else {
       cardLine = `<span style="color:var(--accent)">● On the card: ${onCardN} ` +
-                 `${onCardN === 1 ? "variant" : "variants"}, and only ${onCardN === 1 ? "it is" : "those are"} ` +
+                 `uploaded, and only ${onCardN === 1 ? "that is" : "those are"} ` +
                  `played — not mixed with the built-in ${name.toLowerCase()}.</span>`;
     }
 
     let stagedLine = "";
-    if (staged) {
-      const after = onCardN + staged;
-      if (hooves) {
-        stagedLine = `<span style="color:var(--accent)">✓ ${staged} to send. ` +
-                     `Horses always plays all four hooves; empty slots keep the ` +
-                     `built-in one.</span>`;
-      } else {
-        stagedLine = `<span style="color:var(--accent)">✓ Will add ${staged} — ` +
-                     `${after} in the rotation afterwards.</span>`;
-      }
+    if (hooves) {
+      stagedLine = `<span class="note">Horses always plays all four hooves; ` +
+                   `each slot is a foot, not an alternate.</span>`;
+    } else if (willPlay) {
+      // Note "round robin of N", not "N variants" - the card plays exactly the
+      // slots that name something, which is the number that matters and is not
+      // necessarily eight. Meteors ships five recordings for eight slots.
+      stagedLine = `<span style="color:var(--accent)">✓ ${willPlay}-way round ` +
+                   `robin after syncing` +
+                   (sending ? `, ${sending} to upload` : ``) + `.</span>`;
     }
 
     el.innerHTML = cardLine + (stagedLine ? "<br>" + stagedLine : "");

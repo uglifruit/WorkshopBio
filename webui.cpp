@@ -714,7 +714,7 @@ void __not_in_flash_func(WebUI::HandleSysex)(const uint8_t *msg, uint32_t len)
 		// TWO septets per mode, not one: SysEx data bytes carry 7 bits and there
 		// are 8 variants, so a single byte would silently drop slot 8.
 		static_assert(kNumVariants <= 14, "two septets per mode covers 14 slots");
-		uint8_t sl[2 + kNumModes * 2];
+		uint8_t sl[2 + kNumModes * 3];
 		uint32_t o = 0;
 		sl[o++] = MSG_SLOTS;
 		sl[o++] = static_cast<uint8_t>(kNumModes);
@@ -728,6 +728,24 @@ void __not_in_flash_func(WebUI::HandleSysex)(const uint8_t *msg, uint32_t len)
 					if (h->size[m][v] > 0) bits |= (1u << v);
 			sl[o++] = static_cast<uint8_t>( bits       & 0x7F);
 			sl[o++] = static_cast<uint8_t>((bits >> 7) & 0x7F);
+
+			// How many DISTINCT baked recordings this mode actually has. Slots
+			// are padded by repetition when a mode ships fewer than eight -
+			// Meteors has five - so "8 variants" was a lie the page had no way
+			// of knowing about.
+			// Compared by OFFSET rather than by resolving each slot: the
+			// resolver is an inline in a header, and 64 instantiations of it
+			// here grew the image past the user region and tripped checksize.
+			int distinct = 0;
+			if (kHaveSamples)
+				for (int v = 0; v < kNumVariants; v++)
+				{
+					bool dup = false;
+					for (int k = 0; k < v && !dup; k++)
+						if (kModeSampleOff[m][k] == kModeSampleOff[m][v]) dup = true;
+					if (!dup) distinct++;
+				}
+			sl[o++] = static_cast<uint8_t>(distinct);
 		}
 		Send(sl, o);
 		break;
