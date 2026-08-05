@@ -137,7 +137,11 @@ struct DroneVoice
 class VoiceBank
 {
 public:
-	void init(bool usePcm);
+	/// `tuned` = play samples at their recorded pitch, with no per-agent body
+	/// size and no per-hit jitter. The card otherwise assumes every recording is
+	/// an animal and detunes accordingly — which is right for a flock and wrong
+	/// for anything pitched, where it reads as four out-of-tune copies wobbling.
+	void init(bool usePcm, bool tuned = false);
 
 	/// Trigger agent `i`'s voice with the timbre for `m`.
 	/// `accent` (Q16) scales level; `variation` (Q16) nudges pitch per hit.
@@ -192,6 +196,7 @@ private:
 	const int8_t *sampleData_[kNumModes][kNumVariants] = {};
 	uint32_t      sampleLen_[kNumModes][kNumVariants] = {};
 	bool  usePcm_ = false;
+	bool  tuned_  = false;
 };
 
 } // namespace bio

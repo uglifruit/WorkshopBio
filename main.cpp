@@ -208,7 +208,10 @@ public:
 				gCard  = this;
 				gWebUI = &webui_;
 				gUsbReady = true;      // releases core 1
-				voices_.init(AnySamples());
+				// Alt boot plays samples at their recorded pitch: no per-agent
+				// body size, no per-hit wobble. Rhythm is an ecosystem and wants
+				// the humanisation; alt mode is an instrument and does not.
+				voices_.init(AnySamples(), boot_ == BootMode::Drone);
 				engines_[mode_]->reset(0xB10Du);
 				// Swallow the release of the boot hold, so booting into Drone
 				// does not also read as a tap and cycle straight off Horses.

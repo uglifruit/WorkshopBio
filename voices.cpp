@@ -111,8 +111,9 @@ static inline void setPan(Voice &v, int pos17)
 	v.panR = kFloor + ((r * (32767 - kFloor)) >> 15);
 }
 
-void VoiceBank::init(bool usePcm)
+void VoiceBank::init(bool usePcm, bool tuned)
 {
+	tuned_ = tuned;
 	// AnySamples() covers both sources: a user upload alone is enough, even in
 	// a build with nothing baked in.
 	usePcm_ = usePcm && AnySamples();
@@ -122,6 +123,16 @@ void VoiceBank::init(bool usePcm)
 	// never go stale while the card is playing.
 	for (int m = 0; m < kNumModes; m++)
 	{
+		// Resolve every slot's pointer and length FIRST, so note() never touches
+		// the flash header again — and so the duplicate test below can compare
+		// pointers rather than re-reading flash.
+		for (int v = 0; v < kNumVariants; v++)
+		{
+			SampleRef sr = ResolveSample(m, v);
+			sampleData_[m][v] = sr.data;
+			sampleLen_[m][v]  = sr.len;
+		}
+
 		int n = 0;
 		if (ModeIsUserLoaded(m))
 		{
@@ -131,18 +142,23 @@ void VoiceBank::init(bool usePcm)
 		}
 		else if (kHaveSamples)
 		{
-			for (int v = 0; v < kNumVariants; v++) variantSlot_[m][n++] = static_cast<uint8_t>(v);
+			// Only count slots holding DISTINCT audio. mksamples.py pads a mode
+			// with fewer recordings than slots by repeating earlier ones, so
+			// Meteors' five swooshes fill eight slots as 1,2,3,4,5,1,2,3 — and a
+			// blind round robin over all eight then played 1-3 twice as often as
+			// 4-5. An unintended weighting, invisible because the padding is
+			// deliberate and commented. Duplicates share a flash pointer, so
+			// identity is the test.
+			for (int v = 0; v < kNumVariants; v++)
+			{
+				bool dup = false;
+				for (int k = 0; k < n; k++)
+					if (sampleData_[m][variantSlot_[m][k]] == sampleData_[m][v])
+						{ dup = true; break; }
+				if (!dup) variantSlot_[m][n++] = static_cast<uint8_t>(v);
+			}
 		}
 		variantCount_[m] = static_cast<uint8_t>(n);
-
-		// Resolve every slot's pointer and length now, so note() never touches
-		// the flash header again.
-		for (int v = 0; v < kNumVariants; v++)
-		{
-			SampleRef sr = ResolveSample(m, v);
-			sampleData_[m][v] = sr.data;
-			sampleLen_[m][v]  = sr.len;
-		}
 	}
 
 	// The voice POOL is larger than the agent count, so it gets its own loop.
@@ -243,7 +259,14 @@ void __not_in_flash_func(VoiceBank::selectVariantAndPan)(Voice &v, int agent, Mo
 	case PanMode::Spread:
 		// Agent's spot, nudged by which individual this is, so the members of a
 		// flock occupy their own places rather than stacking up.
-		setPan(v, 1 + agent * 4 + (v.variant & 3));
+		//
+		// `& 3` used to mask this to four positions, so variants 4-7 landed on
+		// exactly the same spots as 0-3 — eight round robins produced four
+		// placements. That is most of why Cicadas, whose variants differ little
+		// in timbre by design, sounded like four insects rather than eight.
+		// Halved and offset so eight variants still fit the agent's own region
+		// of the field rather than sprawling across it.
+		setPan(v, 1 + agent * 4 + (v.variant >> 1));
 		break;
 	case PanMode::Random:
 	{
@@ -373,17 +396,47 @@ void __not_in_flash_func(VoiceBank::note)(int i, Mode m, int32_t accent, int32_t
 		// there the variation is per-event.
 		int32_t rate = kQ16One;
 
-		// Per-agent body size: a fixed offset, so agent 2 is always the same
-		// animal. kPcmAgentOffset is +/-1.0 in Q15, so >>15 scales the mode's
-		// spread onto it.
-		rate += (kPcmAgentOffset[i] * kPcmAgentSpread[mi]) >> 15;
-
-		if (kPcmPerHit[mi])
+		// TUNED (alt boot): play the recording at its own pitch, full stop.
+		//
+		// Everything below assumes the sample is a creature — a per-agent body
+		// size, a per-hit wobble, a per-variant individual. All three are right
+		// for a flock and wrong for anything pitched, where they read as four
+		// permanently out-of-tune copies that also wobble. A static tone or a
+		// chord stab wants none of it, and that is exactly the material someone
+		// uploads. Rhythm keeps the humanisation; alt mode is an instrument.
+		if (!tuned_)
 		{
-			// Crowd modes: an extra small random nudge per event, so two
-			// overlapping honks never fuse into one doubled sound.
-			int32_t j = rand_bipolar(rng_);                 // +/-16384
-			rate += (j * kPcmPerHit[mi]) >> 14;
+			// Per-agent body size: a fixed offset, so agent 2 is always the same
+			// animal. kPcmAgentOffset is +/-1.0 in Q15, so >>15 scales the mode's
+			// spread onto it.
+			rate += (kPcmAgentOffset[i] * kPcmAgentSpread[mi]) >> 15;
+
+			// Per-VARIANT pitch, which the PCM path never had. kVariantPitch was
+			// computed above into v.inc and then only ever read by the synth
+			// branch, so with samples baked in the round robin differed in timbre
+			// but never in pitch — eight geese at exactly one pitch.
+			//
+			// NOT for Horses: its four variants are the four hooves of ONE animal,
+			// and the rule the mode is built on is that a horse's pitch cannot
+			// change hit to hit. Applying it there would undo kPcmPerHit being 0.
+			//
+			// Scaled by the mode's own spread rather than used raw, so a mode meant
+			// to be uniform stays uniform: Cicadas moves a few cents, Frogs a few
+			// tenths of a semitone. These are real recordings that already differ,
+			// so this only has to break the sense of one sound repeating.
+			if (mi != static_cast<int>(Mode::Horses))
+			{
+				int32_t dev = kVariantPitch[mi][v.variant] - kQ16One;
+				rate += (dev * kPcmAgentSpread[mi]) >> 17;
+			}
+
+			if (kPcmPerHit[mi])
+			{
+				// Crowd modes: an extra small random nudge per event, so two
+				// overlapping honks never fuse into one doubled sound.
+				int32_t j = rand_bipolar(rng_);              // +/-16384
+				rate += (j * kPcmPerHit[mi]) >> 14;
+			}
 		}
 
 		if (rate < kQ16One / 4)  rate = kQ16One / 4;        // never below 0.25x
