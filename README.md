@@ -13,18 +13,24 @@ accumulator of a waterfall walk, and the sudden silent clustering of a meteor sh
 Runs on a Music Thing Modular Workshop System Computer. Built on the RP2040 with
 [ComputerCard](https://github.com/TomWhitwell/Workshop_Computer).
 
-> **v1.0.1** — six ecosystems, two boot modes, a full library of real animal
-> recordings, and a browser app for swapping them over USB. Rhythm mode has been
-> played on hardware and iterated on across several rounds of listening. The USB
-> uploader now works on hardware: transfers complete, samples survive the reboot,
-> and replacing one slot leaves the rest alone.
+> **v1.1.0** — six ecosystems, two boot modes, a full library of real animal
+> recordings, and a browser app for swapping them over USB.
 >
-> This release is corrective — it fixes an audible glitch in Drone, a dead first
-> 40% of the Drips knob, a too-busy bottom end on Meteors, and an uploader that
-> hung the card. Drone has now been heard and profiled and still runs slightly
-> over its per-sample budget on dense material; the audio-reactive inputs remain
-> untested against real signal levels. Both are on the list for **v1.1.0**, which
-> will decouple what the two cores do.
+> **The card now runs inside its timing budget.** The physics moved to the second
+> core, so the engine and the voices no longer land in the same 20.83 µs sample:
+> the worst mode went from **334% of budget to 70%, with zero overruns**. The
+> clock is 192 MHz. USB is modal — hold the switch to hand the card over, hold
+> again to go back to playing — so nothing of TinyUSB runs while you perform.
+>
+> Audibly: samples no longer truncate when hits overlap (eight voices, and a
+> steal is a crossfade rather than a cut), the library is re-baked ~1 bit louder
+> with dither, and the round robins finally produce as many distinct sounds as
+> they claim — panning no longer collapses eight variants to four, and Meteors
+> stops playing its first three swooshes twice as often as the rest.
+>
+> Still to come in **v1.2.0**: alt boot replaces its granular texture with a
+> drone bank driven by each agent's engine state. The audio-reactive inputs
+> remain untested against real signal levels.
 >
 > Why the card is the way it is — including the things that were wrong first — is
 > in [docs/DEVLOG.md](docs/DEVLOG.md).

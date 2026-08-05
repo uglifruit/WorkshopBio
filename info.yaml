@@ -3,14 +3,14 @@ Name: BioMimicry
 short-description: Six physics engines generating organic, semi-random triggers, CV and audio
 Language: C++ (ComputerCard)
 Creator: Andy Jenkinson (uglifruit)
-Version: "1.0.1"
+Version: "1.1.0"
 Status: Released
 License: CC-BY-4.0
 repository: https://github.com/uglifruit/WorkshopBio
 discussion: https://discord.com/channels/1210238368898879569/1533895615442849812
 Editor: web
 date-created: 2026-08-02
-date-updated: 2026-08-04
+date-updated: 2026-08-05
 
 contact:
   social:
@@ -19,7 +19,7 @@ contact:
 # The build computes the sha256 for repo-hosted firmware, so none is given here.
 uf2:
   - path: UF2/biomimicry.uf2
-    name: BioMimicry 1.0.1
+    name: BioMimicry 1.1.0
 
 tags:
   - generative
@@ -36,16 +36,16 @@ summary: |
   BioMimicry uses six mathematical physics engines to generate triggers, CV and
   audio that feel organically alive.<br><br>
 
-  Tap the momentary switch to cycle six ecosystems. HORSES: a herd, each animal
+  Tap the momentary switch to cycle six ecosystems.<br> HORSES: a herd, each animal
   running its own stride clock driving four hooves at their real equine footfall
-  offsets - walk, trot, canter and gallop as the actual biomechanical patterns,
-  suspension phases and all. GEESE: a cascading probability network across a
-  flock of twelve, where one honk spikes the odds for the rest. FROGS: the
+  offsets - walk, trot, canter and gallop as biomechanical patterns,
+  suspension phases and all. <br>GEESE: a cascading probability network across a
+  flock of twelve, where one honk spikes the odds for the rest. <br>FROGS: the
   Kuramoto model of coupled oscillators, fighting between metronomic sync and
-  chaotic swarms. RAIN: leaky integrate-and-fire buckets that fill with noise and
-  splash downstream into each other when they overflow. METEORS: an
+  chaotic swarms. <br>RAIN: leaky integrate-and-fire buckets that fill with noise and
+  splash downstream into each other when they overflow. <br>METEORS: an
   inhomogeneous Poisson process where a hidden weather system swells a swarm from
-  eerie silence into dense overlapping barrages. CICADAS: four patches of insects
+  eerie silence into dense overlapping barrages. <br>CICADAS: four patches of insects
   coupled on loudness rather than on phase or events, swelling out of step.<br><br>
 
   Voices are animal recordings with up to eight round robins each. In Horses

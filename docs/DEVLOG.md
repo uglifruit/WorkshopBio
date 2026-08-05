@@ -901,6 +901,34 @@ trade, not a bug.
 
 ---
 
+## The remaining noise is the recordings, not the format
+
+Reported as the samples still sounding "a bit noisy (8 bit, or source, who
+knows)". Worth settling, because it decides whether there is anything left to
+fix.
+
+8-bit's theoretical floor is **49.9 dB**. Measured peak-to-tail on the baked
+library:
+
+| mode | peak | tail RMS | peak-to-tail |
+|------|-----:|---------:|-------------:|
+| Frogs | 94 | 8.04 | **21.4 dB** |
+| Cicadas | 75 | 1.83 | 32.2 dB |
+| Meteors | 97 | 2.17 | 33.0 dB |
+| Geese | 75 | 1.40 | 34.6 dB |
+
+All far above the format's floor, so **the noise is in the source recordings** —
+room tone and mic hiss in the Pixabay originals. More bits would faithfully
+reproduce more noise. (Frogs' 21.4 dB is partly a false alarm: segmenting the
+file shows real call structure through to the last eighth, so what looked like a
+noisy tail is mostly the ribbit still going.)
+
+The +0.8 bits recovered by the louder re-bake were real and worth having; there
+is simply nothing further to win in the format. Reverb is the practical answer,
+and it belongs outside the card.
+
+---
+
 ## Standing notes
 
 - **`tools/simulate.py` duplicates the C++ constants.** It will drift if
