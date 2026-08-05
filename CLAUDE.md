@@ -49,8 +49,8 @@ Keep that split: it is what makes four agents of Kuramoto coupling affordable.
 
 **The divider buys throughput, not slack.** `controlTick()` runs INLINE inside
 `ProcessSample()`, which is a DMA interrupt handler — so on the sample where the physics
-fire, the whole engine must still complete within that one 20.83us slot (2604 cycles at
-125MHz). Never quote an "amortised cycles/sample" figure as headroom; the worst single
+fire, the whole engine must still complete within that one 20.83us slot (4000 cycles at
+192MHz — the card overclocks in main(); stock would be 2604 at 125MHz). Never quote an "amortised cycles/sample" figure as headroom; the worst single
 sample is what matters. Build `-DBIO_PROFILE=ON` to measure it (see `profile.h`).
 
 All fixed-point. Q16 (65536 = 1.0) for levels and probabilities, `uint32_t` phase

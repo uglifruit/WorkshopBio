@@ -16,7 +16,7 @@
 //
 // The Cortex-M0+ SysTick counter counts CPU cycles directly, so this gives exact
 // numbers with no external equipment and no scope. It is a 24-bit DOWN counter,
-// which is ample: the whole budget is 2604 cycles at 125MHz.
+// which is ample: the whole budget is 4000 cycles at 192MHz.
 //
 // Everything here compiles to nothing unless BIO_PROFILE is defined, so the
 // released firmware is byte-identical to a build without it.
@@ -30,9 +30,13 @@
 
 namespace bio {
 
-/// Cycles available per sample at 125MHz / 48kHz. Overrun this and the next DMA
-/// interrupt arrives while we are still in the handler.
-constexpr uint32_t kCycleBudget = 125000000u / 48000u;   // 2604
+/// Cycles available per sample. Overrun this and the next DMA interrupt arrives
+/// while we are still in the handler.
+///
+/// Derived from the clock rather than hard-coded, so the overclock in main()
+/// cannot silently leave the profiler reporting percentages of the wrong number.
+constexpr uint32_t kClockHz     = 192000000u;            // see main(): 192MHz
+constexpr uint32_t kCycleBudget = kClockHz / 48000u;     // 4000
 
 #ifdef BIO_PROFILE
 

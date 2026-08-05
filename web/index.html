@@ -103,7 +103,7 @@
   <div id="profout" hidden style="background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:1rem;margin-bottom:1.5rem">
     <h2 style="margin:0 0 .5rem;font-size:1rem">Timing — worst case per sample</h2>
     <p class="note" style="margin:0 0 .75rem">
-      Budget is <strong>2604 cycles</strong> (20.83&nbsp;µs at 125&nbsp;MHz).
+      Budget is <strong>4000 cycles</strong> (20.83&nbsp;µs at 192&nbsp;MHz).
       Anything over that means the DMA interrupt for the next sample arrives
       while this one is still being processed.
     </p>
@@ -159,8 +159,8 @@ const MSG = {
   PLAY:0x21, CLEARMODE:0x22, SLOTS:0x23, PROF_GET:0x30, PROF:0x31,
 };
 
-// Cycles available per sample: 125MHz / 48kHz. Matches kCycleBudget in profile.h.
-const BUDGET = 2604;
+// Cycles available per sample: 192MHz / 48kHz. Matches kCycleBudget in profile.h.
+const BUDGET = 4000;
 const PROF_NAMES = ["Total","Core0 ctrl","Voices","Outputs","Note-ons"];
 
 const MODES = [
@@ -251,9 +251,15 @@ function fadeOut(d, ms = 4) {
 }
 
 function toBytes(d) {
+  // TPDF dither, matching tools/importwav.py. Without it the quantisation error
+  // correlates with the signal, which is what makes 8-bit read as grit riding on
+  // a decaying tail rather than as hiss. Two uniform randoms summed give a
+  // triangular distribution of +/-1 LSB: more noise on paper, much less
+  // objectionable in the ear.
   const out = new Uint8Array(d.length);
   for (let i = 0; i < d.length; i++) {
-    let s = Math.round(d[i] * 127);
+    const dither = Math.random() + Math.random() - 1.0;
+    let s = Math.floor(d[i] * 127 + dither + 0.5);
     out[i] = (s < -128 ? -128 : s > 127 ? 127 : s) & 0xFF;
   }
   return out;
@@ -381,7 +387,10 @@ async function upload() {
   // One loudness target across everything, so switching modes on the card does
   // not jump in level.
   const all = entries.map(([, s]) => rms(s.audio)).sort((a, b) => a - b);
-  const target = Math.max(all[all.length >> 1] || 0.06, 0.06);
+  // 0.12, matching tools/importwav.py. Normalisation happens BEFORE the 8-bit
+  // conversion, so this figure sets how many of the eight bits actually get
+  // used -- 0.06 discarded about 1.5 of them before the byte was written.
+  const target = Math.max(all[all.length >> 1] || 0.12, 0.12);
 
   const prepared = entries.map(([key, s]) => {
     const d = fadeOut(loudnessMatch(s.audio, target));

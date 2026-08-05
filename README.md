@@ -320,7 +320,7 @@ cmake --build build-profile
 ```
 
 That build times the whole callback and each phase with the Cortex-M0+ SysTick counter
-and shows the worst case on the LEDs — one LED per ~16% of the 2604-cycle budget, all six
+and shows the worst case on the LEDs — one LED per ~16% of the 4000-cycle budget, all six
 flashing if any sample ever overran. A Down tap clears the peaks so each ecosystem can be
 measured separately, and Pulse Out 2 mirrors the callback duration for a scope. It
 compiles to nothing when off: the normal build is byte-identical either way.

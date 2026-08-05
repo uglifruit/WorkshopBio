@@ -523,7 +523,7 @@ void __not_in_flash_func(WebUI::HandleSysex)(const uint8_t *msg, uint32_t len)
 	case MSG_PROF_GET:
 	{
 		// Exact cycle counts beat asking someone to decode blinking LEDs.
-		// Each value is 3 septets (21 bits), plenty for a 2604-cycle budget.
+		// Each value is 3 septets (21 bits), plenty for a 4000-cycle budget.
 		uint8_t p2[2 + kNumProf * 3 + 6];
 		uint32_t o = 0;
 		p2[o++] = MSG_PROF;

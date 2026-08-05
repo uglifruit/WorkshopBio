@@ -22,6 +22,8 @@
 #include "crosscore.h"         // the only state shared between the cores
 #include "pico/multicore.h"
 #include "hardware/watchdog.h" // leaving USB mode reboots
+#include "hardware/vreg.h"     // overvolt for the 192MHz clock
+#include "pico/stdlib.h"       // set_sys_clock_khz
 
 using namespace bio;
 
@@ -1003,6 +1005,27 @@ BioMimicryCard *BioMimicryCard::profCard_ = nullptr;
 
 int main()
 {
+	// 192MHz, up from the stock 125. This is the honest fix for the last of the
+	// timing: the budget is clock/48000, so it goes 2604 -> 4000 cycles per
+	// sample, and full Geese at 2652 stops being 102% of budget and becomes 66%.
+	//
+	// Done here, FIRST, because BioMimicryCard's constructor launches core 1 and
+	// the SDK requires the clock to be settled before that.
+	//
+	// The overvolt is what makes 192 safe rather than hopeful, and it is proven
+	// on this exact hardware: ../WorkshopZX runs 200MHz at 1.15V. 192 is a
+	// deliberate step below that — it clears the budget with room to spare, so
+	// there is no reason to spend the extra margin.
+	//
+	// NOTE: flash access does NOT scale with the core clock. XIP reads cost more
+	// core cycles at 192MHz than at 125, so the flash-bound paths (PCM playback)
+	// will not drop by the full 1.54x. The budget still grows by it, so this is
+	// a win either way — but expect the measured improvement to be less than the
+	// clock ratio, and do not read that as a fault.
+	vreg_set_voltage(VREG_VOLTAGE_1_15);
+	sleep_ms(2);                       // let the regulator settle before the PLL
+	set_sys_clock_khz(192000, true);
+
 	BIO_PROFILE_INIT();
 	static BioMimicryCard card;
 	card.EnableNormalisationProbe();
