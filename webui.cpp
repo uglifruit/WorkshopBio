@@ -482,6 +482,15 @@ void __not_in_flash_func(WebUI::HandleSysex)(const uint8_t *msg, uint32_t len)
 		    sm >= kNumModes || sv >= kNumVariants) { SendErr(ERR_BAD_SLOT); break; }
 		if (hdr_.size[sm][sv] == 0) { SendErr(ERR_PROTOCOL); break; }
 
+		// Read the source BEFORE any clearing. When the alias points at a slot in
+		// the SAME mode — one recording mapped onto two hooves, the obvious case —
+		// clearing the destination's mode would wipe the source first and the
+		// copy would then write zeros. Silently, because nothing checks a slot
+		// against itself.
+		uint32_t srcOff = hdr_.offset[sm][sv];
+		uint32_t srcSz  = hdr_.size[sm][sv];
+		bool     srcTouched = touched_[sm][sv];
+
 		if (!modeCleared_[dm])
 		{
 			modeCleared_[dm] = true;
@@ -492,9 +501,9 @@ void __not_in_flash_func(WebUI::HandleSysex)(const uint8_t *msg, uint32_t len)
 				touched_[dm][v]    = false;
 			}
 		}
-		hdr_.offset[dm][dv] = hdr_.offset[sm][sv];
-		hdr_.size[dm][dv]   = hdr_.size[sm][sv];
-		touched_[dm][dv]    = touched_[sm][sv];
+		hdr_.offset[dm][dv] = srcOff;
+		hdr_.size[dm][dv]   = srcSz;
+		touched_[dm][dv]    = srcTouched;
 		SendAck(8, hdr_.size[dm][dv]);
 		break;
 	}

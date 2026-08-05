@@ -626,6 +626,20 @@ public:
 			gTrig.head = h + 1;
 		}
 
+		// Smoothed trigger density for CV 1. Computed BEFORE the routing below,
+		// which reads it — it used to be updated forty lines later, so CV 1
+		// carried the PREVIOUS tick's value and read zero on the first one. Each firing agent pushes it up;
+		// it leaks away continuously, so a busy patch sits high and a sparse one
+		// hovers near zero. Shift 7 at the 1.5kHz control rate is a time constant
+		// of about 85ms — fast enough to follow a cascade, slow enough that it
+		// reads as a control voltage rather than a stream of blips.
+		int32_t d = density_;
+		d += (popcount4(mask) * (kQ16One / 4) - d) >> 7;
+		if (d < 0) d = 0;
+		if (d > kQ16One) d = kQ16One;
+		density_ = d;
+		gXC.density = d;
+
 		// --- Trigger outputs. ---
 		//
 		// Decided here, applied by core 0: this core does not own the gate
@@ -701,18 +715,6 @@ public:
 		// level: core 0's uiTick owns the decay, so nothing shares a mutable
 		// brightness between the cores.
 		if (mask) gXC.activitySeq = gXC.activitySeq + 1;
-
-		// Smoothed trigger density for CV 1. Each firing agent pushes it up;
-		// it leaks away continuously, so a busy patch sits high and a sparse one
-		// hovers near zero. Shift 7 at the 1.5kHz control rate is a time constant
-		// of about 85ms — fast enough to follow a cascade, slow enough that it
-		// reads as a control voltage rather than a stream of blips.
-		int32_t d = density_;
-		d += (popcount4(mask) * (kQ16One / 4) - d) >> 7;
-		if (d < 0) d = 0;
-		if (d > kQ16One) d = kQ16One;
-		density_ = d;
-		gXC.density = d;
 
 		seed_ = seed_ * 1664525u + 1013904223u;
 	}

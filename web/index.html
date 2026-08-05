@@ -340,20 +340,42 @@ function send(payload) {
 }
 
 // Wait for the card to acknowledge, so we never outrun a flash write.
+// Replies are collected by ONE permanent handler and queued, rather than by a
+// handler installed per wait.
+//
+// The old version set midiIn.onmidimessage inside waitAck and cleared it on
+// resolve, so any reply that arrived BETWEEN waits was dropped on the floor and
+// every later wait was one message behind - which surfaces as "card did not
+// respond" on a message that the card had in fact answered. Harmless while the
+// protocol was strictly ping-pong; not once connect() started firing a burst of
+// SLOTINFO requests.
+const rxQueue = [];
+let rxWaiter = null;
+
+function attachMidiIn(port) {
+  rxQueue.length = 0;
+  rxWaiter = null;
+  port.onmidimessage = (e) => {
+    const d = e.data;
+    if (d[0] !== 0xF0 || d[1] !== MFR) return;
+    if (rxWaiter) { const w = rxWaiter; rxWaiter = null; w(d); }
+    else rxQueue.push(d);
+  };
+}
+
 function waitAck(timeoutMs = 4000) {
   return new Promise((resolve, reject) => {
-    const t = setTimeout(() => {
-      state.midiIn.onmidimessage = null;
-      reject(new Error("card did not respond"));
-    }, timeoutMs);
-    state.midiIn.onmidimessage = (e) => {
-      const d = e.data;
-      if (d[0] !== 0xF0 || d[1] !== MFR) return;
-      clearTimeout(t);
-      state.midiIn.onmidimessage = null;
+    const deliver = (d) => {
       if (d[2] === MSG.ERR) reject(new Error("card reported error " + d[3]));
       else resolve(d);
     };
+    if (rxQueue.length) { deliver(rxQueue.shift()); return; }
+    const t = setTimeout(() => {
+      if (rxWaiter === handler) rxWaiter = null;
+      reject(new Error("card did not respond"));
+    }, timeoutMs);
+    const handler = (d) => { clearTimeout(t); deliver(d); };
+    rxWaiter = handler;
   });
 }
 
@@ -364,6 +386,7 @@ async function connect() {
       if (/biomimicry|workshop|pico/i.test(o.name)) state.midiOut = o;
     for (const i of midi.inputs.values())
       if (/biomimicry|workshop|pico/i.test(i.name)) state.midiIn = i;
+    if (state.midiIn) attachMidiIn(state.midiIn);
     if (!state.midiOut || !state.midiIn) {
       // The card only enumerates once its switch has been held, so "not found"
       // is much more likely to mean "not in USB mode yet" than "unplugged".
