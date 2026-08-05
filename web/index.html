@@ -74,16 +74,15 @@
 <main>
   <h1>Bio<span>Mimicry</span> — sample uploader</h1>
   <p class="sub">
-    Drop your own recordings onto the card over USB. No rebuild, no toolchain.
-    Chrome or Edge (WebMIDI).
+    Drop your own recordings onto the card over USB. Chrome or Edge (WebMIDI).
   </p>
   <p class="note">
-    <strong>First, hold the card's momentary switch down for two seconds</strong>
-    — the LEDs fill left to right, and all six stay lit once it has handed itself
-    over to USB. The card does not appear to your computer until you do: it runs
-    no USB at all while it is playing, which is what keeps the audio path clear.
-    Then press Connect. To go back to playing, <strong>hold the switch again</strong>
-    or press <strong>Back to playing</strong> — either restarts the card.
+    Hold the card's momentary switch down for two seconds — the LEDs fill and
+    stay lit. Then <strong>Connect</strong>.
+  </p>
+  <p class="note">
+    To go back to playing, restart the card by holding the switch, or press
+    <strong>Back to playing</strong>.
   </p>
 
   <div class="bar">
@@ -91,7 +90,6 @@
     <button id="upload" class="ghost" disabled>Upload samples</button>
     <button id="remap" class="ghost" disabled>Update mapping</button>
     <button id="revert" class="ghost" disabled>Revert to built-in</button>
-    <button id="prof" class="ghost" disabled>Read timing</button>
     <button id="play" class="ghost" disabled>Back to playing</button>
     <span id="status">Not connected.</span>
   </div>
@@ -109,31 +107,6 @@
       <div id="capstage" style="width:0;background:var(--warn);transition:width .2s"></div>
     </div>
     <p id="capnote" class="note" style="margin:.45rem 0 0"></p>
-  </div>
-
-  <div id="profout" hidden style="background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:1rem;margin-bottom:1.5rem">
-    <h2 style="margin:0 0 .5rem;font-size:1rem">Timing — worst case per sample</h2>
-    <p class="note" style="margin:0 0 .75rem">
-      Budget is <strong>4000 cycles</strong> (20.83&nbsp;µs at 192&nbsp;MHz).
-      Anything over that means the DMA interrupt for the next sample arrives
-      while this one is still being processed.
-    </p>
-    <p class="note" style="margin:0 0 .75rem">
-      <strong>These numbers are from before you held the switch.</strong> The
-      ecosystem stops when the card hands itself over to USB, so nothing is being
-      measured now — the peaks are the ones it reached while you were playing,
-      and they survive until this button reads them. So: play the mode you want
-      to test, <em>then</em> hold, connect, and click.
-    </p>
-    <p class="note" style="margin:0 0 .75rem">
-      <strong>Each row is its own worst sample, so they do not add up.</strong>
-      The physics run on one sample in 32 and the voices run on all of them, so
-      Engine's peak and Voices' peak are almost never the same sample — their sum
-      routinely exceeds Total, which is the worst <em>single</em> sample and the
-      only figure the budget applies to. Compare a row against itself between
-      builds, never against the others.
-    </p>
-    <table id="proftable"></table>
   </div>
 
   <!-- The pool. Files load here once; slots below choose from it, so the same
@@ -161,41 +134,31 @@
   <progress id="prog" value="0" max="1" hidden></progress>
 
   <p class="note" style="margin-top:1.5rem">
-    Any WAV works — any sample rate, mono or stereo. The browser converts to the
-    card's format (8-bit mono 48&nbsp;kHz), trims silence and matches loudness
-    across everything you load, exactly as <code>tools/importwav.py</code> does.
-    Empty slots keep whatever is already baked into the firmware, so you can
-    replace one ecosystem and leave the rest alone.
+    Any WAV works, mono or stereo. Browser converts to the card's format (8-bit
+    mono 48&nbsp;kHz), trims silence and matches loudness.
   </p>
   <p class="note">
-    The card keeps playing while it receives, then stops for the final write and
-    restarts into your new samples.
+    Setting a slot to <em>none</em> removes it, so a mode with three slots filled
+    plays a three-way round robin.
   </p>
   <p class="note">
-    <strong>Sync to card</strong> makes the card match what you see here: the
-    slots you have set are what it will play. Setting a slot to <em>none</em>
-    removes it, so a mode with three slots filled plays a three-way round robin.
-    A sync that only changes the mapping sends no audio at all.
-  </p>
-  <p class="note">
-    Each slot takes one of three things: a recording the card already holds
-    (<strong>USER 1</strong>, <strong>USER 2</strong>…), one of its
-    <strong>built-in</strong> recordings from any ecosystem — so the stock hoof
-    can be a goose — or a file you have just loaded (<strong>NEW 1</strong>…),
-    which needs uploading first. Each recording is stored once however many slots
-    use it, so reuse costs nothing.
+    Each slot can be: 1. a recording the card already holds
+    (<strong>USER 1</strong>, <strong>USER 2</strong>…) 2. one of its built-in
+    recordings, 3. a file you have just loaded (<strong>NEW 1</strong>…), which
+    will upload 4. None (unused)
   </p>
   <p class="note">
     <strong>Upload samples</strong> sends any NEW files and applies the mapping.
-    <strong>Update mapping</strong> only rewrites which slot plays what — no
-    audio moves, so it is quick and uses no space.
   </p>
   <p class="note">
-    Once any slot of a mode is set, that mode ignores its built-in recordings.
-    <strong>Revert … to built-in</strong> on a mode hands it back; <strong>Revert
-    to built-in</strong> above clears everything and reclaims the space. Each sync
-    appends the audio it needs, so repeatedly replacing the same slot does use
-    space up.
+    <strong>Update mapping</strong> only rewrites which slot plays what.
+  </p>
+  <p class="note">
+    <strong>Revert to built-in</strong> above clears everything and reclaims the
+    space.
+  </p>
+  <p class="note">
+    Sample changes/mapping survive power off!
   </p>
 </main>
 
@@ -210,12 +173,7 @@ const MSG = {
   UP_ALIAS:0x17, UP_DROP:0x18, UP_BAKED:0x19, UP_KEEP:0x1A,
   PLAY:0x21, CLEARMODE:0x22, SLOTS:0x23,
   SLOTINFO:0x24, SLOTDET:0x25,
-  PROF_GET:0x30, PROF:0x31,
 };
-
-// Cycles available per sample: 192MHz / 48kHz. Matches kCycleBudget in profile.h.
-const BUDGET = 4000;
-const PROF_NAMES = ["Total","Core0 ctrl","Voices","Outputs","Note-ons"];
 
 const MODES = [
   ["Horses",  "Variants are the HOOVES: 1 left hind, 2 left fore, 3 right hind, 4 right fore. Hinds strike lower and heavier than fores.", 4],
@@ -561,7 +519,6 @@ async function connect() {
     // mapping is exactly the case where no upload has happened, which is when
     // it used to be the one button still greyed out.
     document.getElementById("remap").disabled = false;
-    document.getElementById("prof").disabled = false;
     document.getElementById("play").disabled = false;
   } catch (e) {
     setStatus("WebMIDI unavailable: " + e.message, "err");
@@ -799,61 +756,6 @@ async function sync(sendAudio) {
   }
 }
 
-// Ask the card for its worst-case cycle counts. Far better than asking a human
-// to decode blinking LEDs, which is what the first attempt at this did.
-async function readProfile() {
-  try {
-    send([MSG.PROF_GET]);
-    // A release build has no handler for this at all and simply will not
-    // answer, which is how we tell the two apart.
-    const d = await waitAck(1500).catch(() => null);
-    if (!d) {
-      setStatus("No timing data — this is a release build. Flash a " +
-                "-DBIO_PROFILE=ON build to measure.", "err");
-      return;
-    }
-    if (d[2] !== MSG.PROF) { setStatus("Unexpected reply.", "err"); return; }
-    const n = d[3];
-    const val = (i) => (d[4 + i*3] << 14) | (d[5 + i*3] << 7) | d[6 + i*3];
-    const rows = [];
-    for (let i = 0; i < n; i++) {
-      const c = val(i), pct = (c / BUDGET) * 100;
-      const over = c > BUDGET;
-      // Only Total is a whole sample; the rest are phases whose peaks land on
-      // different samples. Saying so per row stops the table reading as a
-      // breakdown that ought to sum.
-      const isTotal = i === 0;
-      const label = isTotal ? "<strong>Total</strong> (worst whole sample)"
-                            : `${PROF_NAMES[i] || i} <span class="note">(own worst sample)</span>`;
-      rows.push(`<tr><td>${label}</td>` +
-                `<td style="color:${over ? "var(--err)" : "var(--text)"}">` +
-                `${c} cycles</td>` +
-                `<td style="color:${over ? "var(--err)" : "var(--dim)"}">` +
-                `${pct.toFixed(1)}% of budget${over ? " — OVER" : ""}</td></tr>`);
-    }
-    const ovIdx = 4 + n*3;
-    const overruns = (d[ovIdx] << 14) | (d[ovIdx+1] << 7) | d[ovIdx+2];
-    rows.push(`<tr><td>Overruns</td><td style="color:${overruns ? "var(--err)" : "var(--accent)"}">` +
-              `${overruns}</td><td class="note">samples over budget since last read</td></tr>`);
-
-    // Core 1's worst backlog, if this firmware reports it.
-    const blIdx = ovIdx + 3;
-    if (d.length > blIdx + 2) {
-      const bl = (d[blIdx] << 14) | (d[blIdx+1] << 7) | d[blIdx+2];
-      const bad = bl > 1;
-      rows.push(`<tr><td>Core 1 backlog</td>` +
-                `<td style="color:${bad ? "var(--err)" : "var(--accent)"}">${bl}</td>` +
-                `<td class="note">control ticks owed at once — 1 is healthy, ` +
-                `2+ means core 1 cannot keep up</td></tr>`);
-    }
-    document.getElementById("proftable").innerHTML = rows.join("");
-    document.getElementById("profout").hidden = false;
-    setStatus(overruns ? `${overruns} samples over budget.`
-                       : "No overruns in that window.", overruns ? "err" : "ok");
-  } catch (e) {
-    setStatus("Could not read timing: " + e.message, "err");
-  }
-}
 
 // Send the card back to being an instrument. It reboots, so like every other
 // reboot path here the ack may not arrive — that is success, not failure.
@@ -862,7 +764,7 @@ async function backToPlaying() {
     send([MSG.PLAY]);
     await waitAck(4000).catch(() => null);
     setStatus("Card is restarting — it should be playing again in a moment.", "ok");
-    for (const id of ["upload", "remap", "revert", "prof", "play"])
+    for (const id of ["upload", "remap", "revert", "play"])
       document.getElementById(id).disabled = true;
     document.getElementById("connect").disabled = false;
   } catch (e) {
@@ -877,7 +779,7 @@ async function clearMode(mi, name) {
     send([MSG.CLEARMODE, mi]);
     await waitAck(4000).catch(() => null);
     setStatus(`${name} reverted to built-in — the card is restarting.`, "ok");
-    for (const id of ["upload", "remap", "revert", "prof", "play"])
+    for (const id of ["upload", "remap", "revert", "play"])
       document.getElementById(id).disabled = true;
     document.getElementById("connect").disabled = false;
   } catch (e) {
@@ -1267,7 +1169,6 @@ document.getElementById("connect").onclick = connect;
 document.getElementById("upload").onclick = () => sync(true);
 document.getElementById("remap").onclick = () => sync(false);
 document.getElementById("revert").onclick = revert;
-document.getElementById("prof").onclick = readProfile;
 document.getElementById("play").onclick = backToPlaying;
 
 // Pool loading: the button and a page-wide drop target, so files can arrive
