@@ -779,6 +779,69 @@ above — anything that moved means the switch rework broke something.**
 
 ---
 
+## v1.1.0 Stage 3 — the physics leave the audio interrupt
+
+**Zero overruns.** First time in this whole investigation that a mode has been
+inside budget.
+
+| mode | before | after | |
+|------|-------:|------:|---|
+| Geese | 3900 (150%) | **2209 (85%)** | overruns 249 → **0** |
+| Frogs | 6509 (250%) | **2291 (88%)** | overruns 1640 → **0** |
+
+Frogs is 2.8× faster — from second worst to comfortably inside. And the rhythms
+sound right, which was the real risk: the trigger ring is neither dropping nor
+reordering.
+
+### The split itself
+
+`controlTick()` keeps only what genuinely needs core 0 — the switch, draining
+note-ons, applying gate/CV targets — and everything else is `physicsTick()` on
+core 1. **Core 0's control work went 2411 → 185 cycles.**
+
+Note-ons cross as **packed 32-bit words through a ring**, not as calls, and that
+is not a stylistic choice: `note()` writes ~20 fields of `Voice` including a
+128-entry `ks[]` buffer, while `render()` mutates the same struct every sample.
+Calling it from core 1 would tear the struct, and a half-applied note-on means a
+new `pcm` pointer with an old `pcmLen` — an out-of-bounds flash read, not a
+glitch. The whole payload fits in one word, so the store cannot tear.
+
+### Two things the numbers corrected
+
+**"Engine 2411" was measuring the wrong thing.** After the split that scope wraps
+`controlTick()` — which no longer contains the engine. A stale label, and exactly
+the class of mistake that had me misreading this profiler before. The buckets are
+now named for what they measure: `Ctrl`, `Voices`, `Outputs`, `Notes`. There is
+no Engine row on core 0 because there is no engine on core 0.
+
+**The residual was my own.** With the labels fixed, `Notes` read 2040 — the whole
+remaining problem. `selectVariantAndPan` had **three software divides**, added
+during the round-robin work, one of them **inside a do-while retry loop that can
+spin**; plus `VariantCount()` and `PickUserVariant()` each walked eight slots
+through XIP flash *per note-on*, for an answer that only changes when samples are
+uploaded (which reboots the card). Fixed by advance-and-wrap instead of
+retry-until-different, tables resolved once in `init()`, and a mask-and-fold
+instead of `% 17` in the Random pan case. 430 instructions → 166, three divides →
+none.
+
+Note-ons are also **drained one per sample** now, on the samples that have neither
+the control tick nor the UI tick. A full Geese tick fires four at once, so taking
+them together put ~1200 instructions on a single sample — the very cost the split
+removes, just relocated. The ring already decouples consumption from production,
+so there was never a reason to take them all in one slot.
+
+### A measurement that said "stop"
+
+Frogs' `Notes` is **1332** against Geese's **1356** — identical within noise.
+Frogs is the mode with the Karplus-Strong length calculation: two chained divides
+plus a 128-entry noise fill, and the obvious next thing to cache. The numbers say
+it costs nothing measurable. Left alone.
+
+**Status: Rhythm fixed and confirmed on hardware. Drone still runs the old path
+on core 0 — Stage 4.**
+
+---
+
 ## Standing notes
 
 - **`tools/simulate.py` duplicates the C++ constants.** It will drift if
