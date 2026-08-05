@@ -85,7 +85,8 @@
 
   <div class="bar">
     <button id="connect">Connect</button>
-    <button id="upload" class="ghost" disabled>Sync to card</button>
+    <button id="upload" class="ghost" disabled>Upload samples</button>
+    <button id="remap" class="ghost" disabled>Update mapping</button>
     <button id="revert" class="ghost" disabled>Revert to built-in</button>
     <button id="prof" class="ghost" disabled>Read timing</button>
     <button id="play" class="ghost" disabled>Back to playing</button>
@@ -174,11 +175,17 @@
     A sync that only changes the mapping sends no audio at all.
   </p>
   <p class="note">
-    Each slot can take one of your loaded files, one of the card's own
-    <strong>built-in</strong> recordings — from any ecosystem, so the stock hoof
-    can be a goose — or audio it is <strong>already holding</strong>, shown as
-    <em>Card #1</em> and so on. The card stores each recording once however many
-    slots use it, so reuse costs nothing.
+    Each slot takes one of three things: a recording the card already holds
+    (<strong>USER 1</strong>, <strong>USER 2</strong>…), one of its
+    <strong>built-in</strong> recordings from any ecosystem — so the stock hoof
+    can be a goose — or a file you have just loaded (<strong>NEW 1</strong>…),
+    which needs uploading first. Each recording is stored once however many slots
+    use it, so reuse costs nothing.
+  </p>
+  <p class="note">
+    <strong>Upload samples</strong> sends any NEW files and applies the mapping.
+    <strong>Update mapping</strong> only rewrites which slot plays what — no
+    audio moves, so it is quick and uses no space.
   </p>
   <p class="note">
     Once any slot of a mode is set, that mode ignores its built-in recordings.
@@ -479,9 +486,22 @@ async function connect() {
 
 // --- upload ----------------------------------------------------------------
 
-async function upload() {
+async function sync(sendAudio) {
   const entries = Object.entries(state.slots);
   if (!entries.length) { setStatus("Nothing assigned. Set at least one slot, or use Revert to clear the card.", "err"); return; }
+
+  // "Update mapping" rewrites which slot plays what and sends no audio, so it is
+  // quick and costs no flash. It cannot carry files that are not on the card
+  // yet, so say so rather than silently dropping them.
+  if (!sendAudio) {
+    const pending = Object.values(state.slots)
+                          .some(v => typeof v === "string" && v[0] === "p");
+    if (pending) {
+      setStatus("Some slots use files that are not on the card yet — " +
+                "use Upload samples for those.", "err");
+      return;
+    }
+  }
 
   // Which pool entries are actually referenced by a slot? Only those get sent -
   // and each only ONCE, however many slots use it. Every slot after the first
@@ -660,6 +680,7 @@ async function upload() {
     setStatus("Sync failed: " + e.message, "err");
   } finally {
     document.getElementById("upload").disabled = false;
+    document.getElementById("remap").disabled = false;
   }
 }
 
@@ -726,7 +747,7 @@ async function backToPlaying() {
     send([MSG.PLAY]);
     await waitAck(4000).catch(() => null);
     setStatus("Card is restarting — it should be playing again in a moment.", "ok");
-    for (const id of ["upload", "revert", "prof", "play"])
+    for (const id of ["upload", "remap", "revert", "prof", "play"])
       document.getElementById(id).disabled = true;
     document.getElementById("connect").disabled = false;
   } catch (e) {
@@ -741,7 +762,7 @@ async function clearMode(mi, name) {
     send([MSG.CLEARMODE, mi]);
     await waitAck(4000).catch(() => null);
     setStatus(`${name} reverted to built-in — the card is restarting.`, "ok");
-    for (const id of ["upload", "revert", "prof", "play"])
+    for (const id of ["upload", "remap", "revert", "prof", "play"])
       document.getElementById(id).disabled = true;
     document.getElementById("connect").disabled = false;
   } catch (e) {
@@ -846,7 +867,8 @@ function renderOnCard() {
         return `${MODES[m][0]} ${v + 1}`;
       }).join(", ");
       return `<div style="display:flex;gap:.6rem;align-items:baseline">` +
-             `<span style="color:var(--accent);font-weight:600">#${i + 1}</span>` +
+             `<span style="color:var(--accent);font-weight:600;min-width:4rem">` +
+             `USER ${i + 1}</span>` +
              `<span class="note" style="min-width:5rem">${kb(g.sz)}</span>` +
              `<span class="note" style="min-width:4.5rem">${(g.sz / 48) | 0} ms</span>` +
              `<span style="flex:1">${where}</span></div>`;
@@ -870,7 +892,7 @@ function renderPool() {
     const row = document.createElement("div");
     row.style.cssText = "display:flex;gap:.6rem;align-items:baseline";
     row.innerHTML =
-      `<span style="color:var(--accent);font-weight:600">${i + 1}</span>` +
+      `<span style="color:var(--warn);font-weight:600;min-width:4rem">NEW ${i + 1}</span>` +
       `<span style="flex:1">${p.name}</span>` +
       `<span class="note">${(p.audio.length / 48) | 0} ms</span>` +
       `<span class="note" style="min-width:5.5rem;text-align:right">` +
@@ -908,14 +930,14 @@ function refreshSelects() {
       const onCardOffs = [...new Set(Object.values(state.onCardSlots)
                             .map(x => x.off))].sort((a, b) => a - b);
       const keeps = onCardOffs.length
-        ? `<optgroup label="Already on the card">` + onCardOffs.map((o, i) =>
-            `<option value="k${o}">Card #${i + 1}</option>`).join("") +
+        ? `<optgroup label="On the card">` + onCardOffs.map((o, i) =>
+            `<option value="k${o}">USER ${i + 1}</option>`).join("") +
           `</optgroup>`
         : "";
       sel.innerHTML = `<option value="">— none —</option>` + keeps +
         (state.pool.length
-          ? `<optgroup label="Your samples">` + state.pool.map((p, i) =>
-              `<option value="p${i}">${i + 1}. ${p.name}</option>`).join("") +
+          ? `<optgroup label="To be uploaded">` + state.pool.map((p, i) =>
+              `<option value="p${i}">NEW ${i + 1} — ${p.name}</option>`).join("") +
             `</optgroup>`
           : "") + baked;
       sel.value = (cur === undefined) ? "" : cur;
@@ -1103,7 +1125,8 @@ function updateUsage() {
 }
 
 document.getElementById("connect").onclick = connect;
-document.getElementById("upload").onclick = upload;
+document.getElementById("upload").onclick = () => sync(true);
+document.getElementById("remap").onclick = () => sync(false);
 document.getElementById("revert").onclick = revert;
 document.getElementById("prof").onclick = readProfile;
 document.getElementById("play").onclick = backToPlaying;
