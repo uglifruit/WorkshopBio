@@ -85,7 +85,7 @@
 
   <div class="bar">
     <button id="connect">Connect</button>
-    <button id="upload" class="ghost" disabled>Upload to card</button>
+    <button id="upload" class="ghost" disabled>Sync to card</button>
     <button id="revert" class="ghost" disabled>Revert to built-in</button>
     <button id="prof" class="ghost" disabled>Read timing</button>
     <button id="play" class="ghost" disabled>Back to playing</button>
@@ -132,6 +132,27 @@
     <table id="proftable"></table>
   </div>
 
+  <!-- The pool. Files load here once; slots below choose from it, so the same
+       recording can be used in several places without being sent twice. -->
+  <div id="poolbox" style="background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:.9rem 1rem;margin-bottom:1.5rem">
+    <h2 style="margin:0 0 .15rem;font-size:1rem">Your samples</h2>
+    <p class="hint" style="margin:0 0 .6rem">
+      Load recordings here, then pick them in the slots below. One file can be
+      used as many times as you like — the card stores it once, so reuse is free.
+    </p>
+    <div id="pool" style="display:grid;gap:.35rem;margin-bottom:.6rem"></div>
+    <button id="addfiles" class="ghost" style="font-size:.85rem;padding:.35rem .8rem">Add files…</button>
+    <input id="poolinput" type="file" accept="audio/*,.wav" multiple hidden>
+  </div>
+
+  <!-- What the card is already holding. Survives a reboot, unlike the pool
+       above, because the card can report offsets and sizes even though it
+       cannot report the original filenames. -->
+  <div id="oncardbox" style="background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:.9rem 1rem;margin-bottom:1.5rem">
+    <h2 style="margin:0 0 .15rem;font-size:1rem">On the card</h2>
+    <div id="oncard"></div>
+  </div>
+
   <div class="modes" id="modes"></div>
   <progress id="prog" value="0" max="1" hidden></progress>
 
@@ -147,11 +168,17 @@
     restarts into your new samples.
   </p>
   <p class="note">
-    Uploads <strong>add to</strong> what is already on the card — send one sample,
-    listen to it, then send another and you end up with both. To clear a mode,
-    use its own <strong>Revert … to built-in</strong> button; to clear everything
-    and reclaim the space, use <strong>Revert to built-in</strong> above. Space is
-    consumed by every upload, including replacements of the same slot.
+    <strong>Sync to card</strong> makes the card match what you see here: the
+    slots you have set are what it will play. Setting a slot to <em>none</em>
+    removes it, so a mode with three slots filled plays a three-way round robin.
+    A sync that only changes the mapping sends no audio at all.
+  </p>
+  <p class="note">
+    Once any slot of a mode is set, that mode ignores its built-in recordings.
+    <strong>Revert … to built-in</strong> on a mode hands it back; <strong>Revert
+    to built-in</strong> above clears everything and reclaims the space. Each sync
+    appends the audio it needs, so repeatedly replacing the same slot does use
+    space up.
   </p>
 </main>
 
@@ -163,7 +190,9 @@ const MFR = 0x7D;
 const MSG = {
   HELLO:0x01, INFO:0x02, UP_BEGIN:0x10, UP_SLOT:0x11, UP_CHUNK:0x12,
   UP_SLOTEND:0x13, UP_END:0x14, ACK:0x15, ERR:0x16, ERASE:0x20,
-  PLAY:0x21, CLEARMODE:0x22, SLOTS:0x23, PROF_GET:0x30, PROF:0x31,
+  UP_ALIAS:0x17, UP_DROP:0x18, PLAY:0x21, CLEARMODE:0x22, SLOTS:0x23,
+  SLOTINFO:0x24, SLOTDET:0x25,
+  PROF_GET:0x30, PROF:0x31,
 };
 
 // Cycles available per sample: 192MHz / 48kHz. Matches kCycleBudget in profile.h.
@@ -187,7 +216,13 @@ const SR = 48000;
 // slots       = what is staged in this page, not yet sent
 // onCard      = what the card reports it is actually playing, per mode: a
 //               bitmask of which variants hold uploaded audio
-const state = { midiOut:null, midiIn:null, slots:{}, info:null, onCard:null };
+// pool   = every file loaded in this page, ONCE each: {name, audio}
+// slots  = which pool entry each mode+variant uses, as "mode:variant" -> index.
+//          Several slots may name the same entry; the card stores that audio
+//          once and points both slots at it, so reuse is free.
+// onCard = what the card reports it is actually playing, per mode
+const state = { midiOut:null, midiIn:null, pool:[], slots:{}, info:null,
+                onCard:null, onCardSlots:{} };
 
 // --- audio conversion ------------------------------------------------------
 
@@ -373,6 +408,23 @@ async function connect() {
         for (let m = 0; m < nm; m++)
           state.onCard.push(sl[4 + m*2] | (sl[5 + m*2] << 7));
       }
+      // Pull per-slot detail so the page can show what is ON THE CARD after a
+      // reboot, not just what this session loaded. Slots sharing an offset are
+      // sharing one recording, which is how reuse survives the round trip.
+      state.onCardSlots = {};
+      for (let m = 0; m < MODES.length; m++) {
+        send([MSG.SLOTINFO, m]);
+        const det = await waitAck(1500).catch(() => null);
+        if (!det || det[2] !== MSG.SLOTDET) break;
+        const nv = det[4];
+        for (let v = 0; v < nv; v++) {
+          const b = 5 + v * 6;
+          const off = (det[b] << 14) | (det[b+1] << 7) | det[b+2];
+          const sz  = (det[b+3] << 14) | (det[b+4] << 7) | det[b+5];
+          if (sz > 0) state.onCardSlots[`${m}:${v}`] = { off, sz };
+        }
+      }
+      renderOnCard();
       updateUsage();
     } else {
       setStatus("Connected, but the card did not identify itself.", "err");
@@ -389,22 +441,50 @@ async function connect() {
 
 async function upload() {
   const entries = Object.entries(state.slots);
-  if (!entries.length) { setStatus("Nothing loaded to upload.", "err"); return; }
+  if (!entries.length) { setStatus("Nothing assigned. Set at least one slot, or use Revert to clear the card.", "err"); return; }
+
+  // Which pool entries are actually referenced by a slot? Only those get sent -
+  // and each only ONCE, however many slots use it. Every slot after the first
+  // becomes an alias pointing at the same bytes on the card.
+  const usedIdx = [...new Set(Object.values(state.slots))].sort((a, b) => a - b);
 
   // One loudness target across everything, so switching modes on the card does
   // not jump in level.
-  const all = entries.map(([, s]) => rms(s.audio)).sort((a, b) => a - b);
+  const all = usedIdx.map(i => rms(state.pool[i].audio)).sort((a, b) => a - b);
   // 0.12, matching tools/importwav.py. Normalisation happens BEFORE the 8-bit
   // conversion, so this figure sets how many of the eight bits actually get
   // used -- 0.06 discarded about 1.5 of them before the byte was written.
   const target = Math.max(all[all.length >> 1] || 0.12, 0.12);
 
-  const prepared = entries.map(([key, s]) => {
-    const d = fadeOut(loudnessMatch(s.audio, target));
-    return { key, mode: s.mode, variant: s.variant, bytes: toBytes(d) };
-  });
+  // Convert each distinct file once.
+  const bytesFor = new Map();
+  for (const i of usedIdx)
+    bytesFor.set(i, toBytes(fadeOut(loudnessMatch(state.pool[i].audio, target))));
 
+  // First slot using a given file CARRIES it; the rest alias that slot.
+  const carrier = new Map();
+  const prepared = [], aliases = [];
+  for (const [key, idx] of entries) {
+    const [mode, variant] = key.split(":").map(Number);
+    if (carrier.has(idx)) {
+      const src = carrier.get(idx);
+      aliases.push({ mode, variant, srcMode: src.mode, srcVariant: src.variant });
+    } else {
+      carrier.set(idx, { mode, variant });
+      prepared.push({ key, mode, variant, bytes: bytesFor.get(idx) });
+    }
+  }
+
+  // Only the carried audio counts against the cap; aliases are free.
   const total = prepared.reduce((n, p) => n + p.bytes.length, 0);
+
+  // A mode the card holds but the page has emptied entirely sends no UP_SLOT,
+  // so nothing would clear it. Name those explicitly and revert them, or
+  // "set every slot to none and sync" would silently do nothing.
+  const touched = new Set([...prepared, ...aliases].map(x => x.mode));
+  const onCardModes = new Set(
+    Object.keys(state.onCardSlots).map(k => Number(k.split(":")[0])));
+  const emptied = [...onCardModes].filter(m => !touched.has(m));
   const kb = (n) => `${Math.round(n / 1024)} KB`;
 
   // Two different limits, and saying which one you hit matters. The per-upload
@@ -430,7 +510,7 @@ async function upload() {
   const prog = document.getElementById("prog");
   prog.hidden = false; prog.value = 0;
   document.getElementById("upload").disabled = true;
-  setStatus("Sending… the card keeps playing until the last chunk arrives.");
+  setStatus("Syncing… the card keeps playing until the last chunk arrives.");
 
   try {
     // The card now erases only the sectors this upload needs, not the whole 1MB,
@@ -441,10 +521,13 @@ async function upload() {
 
     let done = 0;
     for (const p of prepared) {
-      // 4th byte 0 = ADD to what is already on the card. Uploads never wipe a
-      // mode: "Revert X to built-in" is how you clear one, which is an explicit
-      // button rather than a tickbox whose effect only shows after a reboot.
-      send([MSG.UP_SLOT, p.mode, p.variant, 0]);
+      // 4th byte 1 = REPLACE this mode. The page's mapping is now the whole
+      // truth for any mode it touches, so a sync has to be able to REMOVE a
+      // slot as well as add one: set Geese 8 to none, sync, and the card must
+      // end up with seven geese rather than seven plus the old eighth. The
+      // firmware clears the mode on its first slot of the session, so this is
+      // idempotent across the several slots a mode usually has.
+      send([MSG.UP_SLOT, p.mode, p.variant, 1]);
       await waitAck();
 
       // Chunk small enough that an encoded SysEx stays comfortable over USB.
@@ -464,6 +547,22 @@ async function upload() {
       await waitAck();
     }
 
+    // Modes the page has emptied: clear them as part of THIS session. Not
+    // MSG_CLEARMODE, which commits and reboots immediately and would abort the
+    // sync half way through.
+    for (const m of emptied) {
+      send([MSG.UP_DROP, m]);
+      await waitAck();
+    }
+
+    // Slots that reuse a file already sent: point them at it rather than
+    // sending the audio again. Must come AFTER the carriers, since an alias
+    // names a slot that has to exist already.
+    for (const a of aliases) {
+      send([MSG.UP_ALIAS, a.mode, a.variant, a.srcMode, a.srcVariant]);
+      await waitAck();
+    }
+
     // The card acks UP_END and then REBOOTS, so it vanishes from WebMIDI a
     // moment later. A missing ack here is normal, not a failure -- treating the
     // disconnect as an error is what made a working upload look like a hang.
@@ -478,17 +577,14 @@ async function upload() {
     // that is no longer true; reconnecting re-reads both.
     state.slots = {};
     state.onCard = null;
-    for (const el of document.querySelectorAll(".slot")) {
-      el.classList.remove("filled", "oncard");
-      const len = el.querySelector(".len");
-      if (len) len.textContent = "empty";
-    }
+    renderPool();
+    refreshSelects();
     updateUsage();
 
     document.getElementById("revert").disabled = false;
     document.getElementById("connect").disabled = false;
   } catch (e) {
-    setStatus("Upload failed: " + e.message, "err");
+    setStatus("Sync failed: " + e.message, "err");
   } finally {
     document.getElementById("upload").disabled = false;
   }
@@ -592,13 +688,13 @@ async function revert() {
     // "will play only these two" note would be describing a card that no
     // longer exists.
     state.slots = {};
+    state.pool = [];
     state.onCard = null;   // the card is back to built-in everywhere
+    state.onCardSlots = {};
+    renderOnCard();
     if (state.info) state.info.used = 0;   // region emptied and reclaimed
-    for (const el of document.querySelectorAll(".slot")) {
-      el.classList.remove("filled");
-      const len = el.querySelector(".len");
-      if (len) len.textContent = "empty";
-    }
+    renderPool();
+    refreshSelects();
     updateUsage();
 
     setStatus("Reverted to the built-in samples — the card is restarting.", "ok");
@@ -611,6 +707,127 @@ async function revert() {
 
 // --- UI --------------------------------------------------------------------
 
+/// Add a file to the pool, returning its index (or -1 if it would not decode).
+/// Identical names are reused rather than duplicated, so dropping the same file
+/// on four slots gives one pool entry and four references to it.
+async function addToPool(file) {
+  const existing = state.pool.findIndex(p => p.name === file.name);
+  if (existing >= 0) return existing;
+  try {
+    let d = trim(await decodeWav(file));
+    state.pool.push({ name: file.name, audio: d });
+    renderPool();
+    return state.pool.length - 1;
+  } catch (e) {
+    setStatus(`Could not read ${file.name}.`, "err");
+    return -1;
+  }
+}
+
+/// Remove a pool entry, and every slot assignment that used it. Indices above it
+/// shift down, so the remaining assignments are renumbered rather than silently
+/// pointing at the wrong file.
+function removeFromPool(idx) {
+  state.pool.splice(idx, 1);
+  const next = {};
+  for (const [k, i] of Object.entries(state.slots)) {
+    if (i === idx) continue;                 // slots using it become empty
+    next[k] = i > idx ? i - 1 : i;
+  }
+  state.slots = next;
+  renderPool();
+  refreshSelects();
+  updateUsage();
+}
+
+/// What is ALREADY on the card, grouped by shared audio.
+///
+/// The page cannot know the original filenames after a reboot - the card stores
+/// audio, not names - so entries are identified by size and by where they are
+/// used. Slots sharing an offset are sharing one recording, so reuse survives
+/// the round trip even though the names do not.
+function renderOnCard() {
+  const box = document.getElementById("oncard");
+  if (!box) return;
+  const entries = Object.entries(state.onCardSlots);
+  if (!entries.length) {
+    box.innerHTML = `<span class="note">Nothing uploaded — the card is using ` +
+                    `its built-in recordings.</span>`;
+    return;
+  }
+  // Group slots by offset: same offset means same audio.
+  const byOff = new Map();
+  for (const [key, { off, sz }] of entries) {
+    if (!byOff.has(off)) byOff.set(off, { sz, slots: [] });
+    byOff.get(off).slots.push(key);
+  }
+  const kb = (n) => `${Math.round(n / 1024)} KB`;
+  const rows = [...byOff.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([off, g], i) => {
+      const where = g.slots.map(k => {
+        const [m, v] = k.split(":").map(Number);
+        return `${MODES[m][0]} ${v + 1}`;
+      }).join(", ");
+      return `<div style="display:flex;gap:.6rem;align-items:baseline">` +
+             `<span style="color:var(--accent);font-weight:600">#${i + 1}</span>` +
+             `<span class="note" style="min-width:5rem">${kb(g.sz)}</span>` +
+             `<span class="note" style="min-width:4.5rem">${(g.sz / 48) | 0} ms</span>` +
+             `<span style="flex:1">${where}</span></div>`;
+    });
+  const total = [...byOff.values()].reduce((n, g) => n + g.sz, 0);
+  box.innerHTML = rows.join("") +
+    `<div class="note" style="margin-top:.4rem">${byOff.size} ` +
+    `${byOff.size === 1 ? "recording" : "recordings"}, ${kb(total)} in use.</div>`;
+}
+
+function renderPool() {
+  const box = document.getElementById("pool");
+  if (!box) return;
+  if (!state.pool.length) {
+    box.innerHTML = `<span class="note">Nothing loaded yet.</span>`;
+    return;
+  }
+  box.innerHTML = "";
+  state.pool.forEach((p, i) => {
+    const used = Object.values(state.slots).filter(x => x === i).length;
+    const row = document.createElement("div");
+    row.style.cssText = "display:flex;gap:.6rem;align-items:baseline";
+    row.innerHTML =
+      `<span style="color:var(--accent);font-weight:600">${i + 1}</span>` +
+      `<span style="flex:1">${p.name}</span>` +
+      `<span class="note">${(p.audio.length / 48) | 0} ms</span>` +
+      `<span class="note" style="min-width:5.5rem;text-align:right">` +
+      `${used ? `used ${used}×` : "unused"}</span>`;
+    const x = document.createElement("span");
+    x.textContent = "×";
+    x.title = "Remove from the pool";
+    x.style.cssText = "cursor:pointer;color:var(--dim)";
+    x.onmouseover = () => x.style.color = "var(--err)";
+    x.onmouseout  = () => x.style.color = "var(--dim)";
+    x.onclick = () => removeFromPool(i);
+    row.appendChild(x);
+    box.appendChild(row);
+  });
+}
+
+/// Rebuild every slot dropdown from the current pool, preserving assignments.
+function refreshSelects() {
+  MODES.forEach(([, , count], mi) => {
+    for (let v = 0; v < count; v++) {
+      const sel = document.getElementById(`sel${mi}_${v}`);
+      if (!sel) continue;
+      const cur = state.slots[`${mi}:${v}`];
+      sel.innerHTML = `<option value="">— none —</option>` +
+        state.pool.map((p, i) =>
+          `<option value="${i}">${i + 1}. ${p.name}</option>`).join("");
+      sel.value = (cur === undefined) ? "" : String(cur);
+      const slot = sel.parentElement;
+      if (slot) slot.classList.toggle("filled", cur !== undefined);
+    }
+  });
+}
+
 function build() {
   const wrap = document.getElementById("modes");
   MODES.forEach(([name, hint, count], mi) => {
@@ -620,32 +837,33 @@ function build() {
     const slots = document.createElement("div");
     slots.className = "slots";
     for (let v = 0; v < count; v++) {
-      // A div, not a label. As a <label> wrapping the file input, the browser
-      // opened the picker natively AND the onclick below opened it again --
-      // so choosing one file meant answering the dialog twice.
       const s = document.createElement("div");
       s.className = "slot";
-      s.innerHTML = `<span class="n">${v + 1}</span><span class="len">empty</span>`;
-      const inp = document.createElement("input");
-      inp.type = "file"; inp.accept = "audio/*,.wav"; inp.hidden = true;
-      inp.onchange = () => inp.files[0] && load(mi, v, inp.files[0], s);
-      s.appendChild(inp);
-      // Click the little x to unstage. Without this a file could only be
-      // ADDED — going over the per-upload cap meant reloading the page and
-      // starting again, which is a bad answer to "I picked one too many".
-      const clr = document.createElement("span");
-      clr.className = "x";
-      clr.textContent = "×";
-      clr.title = "Remove this file";
-      clr.onclick = (e) => { e.stopPropagation(); unstage(mi, v, s); };
-      s.appendChild(clr);
+      s.innerHTML = `<span class="n">${v + 1}</span>`;
 
-      s.onclick = (e) => { if (e.target !== inp && e.target !== clr) inp.click(); };
+      // A dropdown over the POOL, not a file input. One recording can therefore
+      // serve several slots -- four hooves from one clop, or the same note in
+      // two ecosystems -- and the card stores it once, so reuse costs no flash.
+      const sel = document.createElement("select");
+      sel.id = `sel${mi}_${v}`;
+      sel.onchange = () => {
+        const k = `${mi}:${v}`;
+        if (sel.value === "") delete state.slots[k];
+        else state.slots[k] = parseInt(sel.value, 10);
+        updateUsage();
+      };
+      s.appendChild(sel);
+
+      // Dropping a file straight onto a slot still works: it joins the pool and
+      // is assigned here, which is the common case of "this one, here".
       s.ondragover = (e) => { e.preventDefault(); s.classList.add("drag"); };
       s.ondragleave = () => s.classList.remove("drag");
-      s.ondrop = (e) => {
+      s.ondrop = async (e) => {
         e.preventDefault(); s.classList.remove("drag");
-        if (e.dataTransfer.files[0]) load(mi, v, e.dataTransfer.files[0], s);
+        const f = e.dataTransfer.files[0];
+        if (!f) return;
+        const idx = await addToPool(f);
+        if (idx >= 0) { state.slots[`${mi}:${v}`] = idx; refreshSelects(); updateUsage(); }
       };
       slots.appendChild(s);
     }
@@ -690,8 +908,11 @@ function updateCapacity() {
   // Staged size is approximate: the real bytes are produced at upload time after
   // loudness matching and trimming. Length in samples is the right order of
   // magnitude and 8-bit mono means one byte per sample.
-  const staged = Object.values(state.slots)
-                       .reduce((n, s) => n + (s.audio ? s.audio.length : 0), 0);
+  // Distinct pool entries actually assigned. Reuse is free on the card, so a
+  // file used four times still counts once here.
+  const usedIdx = [...new Set(Object.values(state.slots))];
+  const staged = usedIdx.reduce(
+    (n, i) => n + (state.pool[i] ? state.pool[i].audio.length : 0), 0);
 
   const kb = (n) => `${Math.round(n / 1024)} KB`;
   const pctUsed  = Math.min(100, (used / total) * 100);
@@ -725,13 +946,19 @@ function updateUsage() {
     // Mark the slots the card already has, so it is obvious what you are adding
     // to. Staged files win the label, since those are about to overwrite.
     for (let v = 0; v < count; v++) {
-      const sl = document.querySelector(`#modes .mode:nth-of-type(${mi + 1}) ` +
-                                        `.slot:nth-of-type(${v + 1})`);
-      if (!sl || state.slots[`${mi}:${v}`]) continue;
-      const len = sl.querySelector(".len");
+      const sel = document.getElementById(`sel${mi}_${v}`);
+      if (!sel) continue;
+      const assigned = state.slots[`${mi}:${v}`] !== undefined;
       const has = (bits >> v) & 1;
-      if (len) len.textContent = has ? "on card" : "empty";
-      sl.classList.toggle("oncard", !!has);
+      const slot = sel.parentElement;
+      if (slot) slot.classList.toggle("oncard", !assigned && !!has);
+      // Say what the card already holds, so it is clear what you are adding to.
+      const opt = sel.querySelector('option[value=""]');
+      // "none" means this slot is not in the rotation at all. Once ANY slot of a
+      // mode is uploaded the card ignores that mode's built-in recordings, so
+      // leaving a slot empty genuinely shortens the round robin - set Geese 8 to
+      // none and you get seven geese, not seven plus a stock one.
+      opt.textContent = has ? "— none (was on card) —" : "— none —";
     }
 
     const staged = Object.keys(state.slots)
@@ -776,37 +1003,37 @@ function updateUsage() {
   });
 }
 
-/// Drop a staged file. The card is untouched — this only clears what this page
-/// was about to send.
-function unstage(mode, variant, el) {
-  delete state.slots[`${mode}:${variant}`];
-  el.classList.remove("filled");
-  const len = el.querySelector(".len");
-  if (len) len.textContent = "empty";
-  const inp = el.querySelector("input");
-  if (inp) inp.value = "";        // so the same file can be picked again
-  updateUsage();
-}
-
-async function load(mode, variant, file, el) {
-  try {
-    let d = await decodeWav(file);
-    d = trim(d);
-    state.slots[`${mode}:${variant}`] = { mode, variant, audio: d, name: file.name };
-    el.classList.add("filled");
-    el.querySelector(".len").textContent = `${(d.length / 48) | 0} ms`;
-    updateUsage();
-  } catch (e) {
-    el.querySelector(".len").textContent = "unreadable";
-  }
-}
-
 document.getElementById("connect").onclick = connect;
 document.getElementById("upload").onclick = upload;
 document.getElementById("revert").onclick = revert;
 document.getElementById("prof").onclick = readProfile;
 document.getElementById("play").onclick = backToPlaying;
+
+// Pool loading: the button and a page-wide drop target, so files can arrive
+// either way before being assigned to slots.
+const poolInput = document.getElementById("poolinput");
+document.getElementById("addfiles").onclick = () => poolInput.click();
+poolInput.onchange = async () => {
+  for (const f of poolInput.files) await addToPool(f);
+  poolInput.value = "";
+  refreshSelects();
+  updateUsage();
+};
+const poolBox = document.getElementById("poolbox");
+poolBox.ondragover = (e) => { e.preventDefault(); poolBox.style.borderColor = "var(--accent)"; };
+poolBox.ondragleave = () => poolBox.style.borderColor = "var(--line)";
+poolBox.ondrop = async (e) => {
+  e.preventDefault();
+  poolBox.style.borderColor = "var(--line)";
+  for (const f of e.dataTransfer.files) await addToPool(f);
+  refreshSelects();
+  updateUsage();
+};
+
 build();
+renderPool();
+renderOnCard();
+refreshSelects();
 </script>
 </body>
 </html>

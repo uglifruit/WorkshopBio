@@ -499,6 +499,26 @@ void __not_in_flash_func(WebUI::HandleSysex)(const uint8_t *msg, uint32_t len)
 		break;
 	}
 
+	case MSG_UP_DROP:
+	{
+		// Empty a mode as part of the CURRENT session, staged like every other
+		// change and committed at UP_END. MSG_CLEARMODE does the same thing but
+		// commits and reboots immediately, which would abort a sync half way
+		// through - so this exists for "the page emptied a mode the card holds".
+		if (!uploading_ || n < 2) { SendErr(ERR_PROTOCOL); break; }
+		uint8_t m = p[1];
+		if (m >= kNumModes) { SendErr(ERR_BAD_SLOT); break; }
+		modeCleared_[m] = true;
+		for (int v = 0; v < kNumVariants; v++)
+		{
+			hdr_.offset[m][v] = 0;
+			hdr_.size[m][v]   = 0;
+			touched_[m][v]    = false;
+		}
+		SendAck(9, 0);
+		break;
+	}
+
 	case MSG_UP_CHUNK:
 	{
 		if (!uploading_) { SendErr(ERR_PROTOCOL); break; }
@@ -626,6 +646,45 @@ void __not_in_flash_func(WebUI::HandleSysex)(const uint8_t *msg, uint32_t len)
 			sl[o++] = static_cast<uint8_t>((bits >> 7) & 0x7F);
 		}
 		Send(sl, o);
+		break;
+	}
+
+	case MSG_SLOTINFO:
+	{
+		// Per-slot OFFSET and SIZE for one mode, so the browser can show what is
+		// on the card after a reboot rather than only what this page session
+		// happened to load.
+		//
+		// Offset is the useful part: two slots sharing one offset are sharing one
+		// recording, which is how the mapping UI can redraw "file 2 is used by
+		// Horses 1 and Horses 3" without the page having to remember it.
+		//
+		// One mode per request: eight slots x two 3-septet fields is 48 bytes,
+		// and Send() has a 64-byte buffer.
+		if (n < 2) { SendErr(ERR_PROTOCOL); break; }
+		uint8_t m = p[1];
+		if (m >= kNumModes) { SendErr(ERR_BAD_SLOT); break; }
+
+		uint8_t sd[3 + kNumVariants * 6];
+		uint32_t o = 0;
+		sd[o++] = MSG_SLOTDET;
+		sd[o++] = m;
+		sd[o++] = static_cast<uint8_t>(kNumVariants);
+		const UserSampleHeader *h = UserHeader();
+		bool have = HaveUserSamples();
+		for (int v = 0; v < kNumVariants; v++)
+		{
+			uint32_t off = have ? h->offset[m][v] : 0;
+			uint32_t sz  = have ? h->size[m][v]   : 0;
+			if (sz == 0) off = 0;
+			sd[o++] = static_cast<uint8_t>((off >> 14) & 0x7F);
+			sd[o++] = static_cast<uint8_t>((off >> 7)  & 0x7F);
+			sd[o++] = static_cast<uint8_t>( off        & 0x7F);
+			sd[o++] = static_cast<uint8_t>((sz  >> 14) & 0x7F);
+			sd[o++] = static_cast<uint8_t>((sz  >> 7)  & 0x7F);
+			sd[o++] = static_cast<uint8_t>( sz         & 0x7F);
+		}
+		Send(sd, o);
 		break;
 	}
 

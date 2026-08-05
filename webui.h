@@ -30,6 +30,7 @@ enum : uint8_t {
 	MSG_UP_CHUNK   = 0x12,  // ui->fw: 7-bit-encoded audio for the current slot
 	MSG_UP_SLOTEND = 0x13,  // ui->fw: this slot is complete
 	MSG_UP_ALIAS   = 0x17,  // ui->fw: point a slot at audio already sent
+	MSG_UP_DROP    = 0x18,  // ui->fw: empty a mode, staged (no reboot)
 	MSG_UP_END     = 0x14,  // ui->fw: whole upload done -> commit header, resume
 	MSG_UP_ACK     = 0x15,  // fw->ui: ready for more / progress
 	MSG_UP_ERR     = 0x16,  // fw->ui: something went wrong; payload = code
@@ -37,6 +38,8 @@ enum : uint8_t {
 	MSG_PLAY       = 0x21,  // ui->fw: leave USB mode and reboot into playing
 	MSG_CLEARMODE  = 0x22,  // ui->fw: revert ONE mode to its baked recordings
 	MSG_SLOTS      = 0x23,  // fw->ui: which slots currently hold user audio
+	MSG_SLOTINFO   = 0x24,  // ui->fw: detail for one mode; fw replies MSG_SLOTDET
+	MSG_SLOTDET    = 0x25,  // fw->ui: per-slot offset+size for one mode
 	MSG_PROF_GET   = 0x30,  // ui->fw: send the timing peaks (profile builds)
 	MSG_PROF       = 0x31,  // fw->ui: peak cycles per bucket + overrun count
 };
