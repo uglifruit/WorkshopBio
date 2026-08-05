@@ -43,6 +43,13 @@ struct UserSampleHeader
 constexpr uint32_t kUserMagic   = 0x42494F31u;   // "BIO1"
 constexpr uint32_t kUserVersion = 1;
 
+/// Set in a slot's size[] to mean "play a BAKED recording, not uploaded audio":
+/// offset[] then holds the mode and the low bits of size[] the variant. Sizes
+/// never approach this, so the bit was always spare — and firmware that predates
+/// it simply fails the bounds check and falls back to baked, which is exactly
+/// what such a slot is asking for anyway.
+constexpr uint32_t kBakedFlag = 0x80000000u;
+
 // The header occupies the first flash sector of the region; audio follows.
 // RP2040 flash erases a sector at a time; every erase must be sector-aligned.
 constexpr uint32_t kFlashSector   = 4096;
@@ -84,6 +91,28 @@ static inline SampleRef ResolveSample(int mode, int variant)
 	{
 		const UserSampleHeader *h = UserHeader();
 		uint32_t sz = h->size[mode][variant];
+
+		// Bit 31 set means "this slot plays a BAKED recording", with the mode in
+		// offset[] and the variant in the low bits of size[].
+		//
+		// A slot's offset is relative to the user region, so before this there
+		// was no way for the header to name a built-in recording at all — you
+		// could not put the stock horse hoof on Geese 1 without re-uploading it.
+		// A flag bit rather than a version bump because sizes are at most 128KB,
+		// so the top bits were always free, and because older firmware reads the
+		// huge size, fails its bounds check below, and falls back to baked —
+		// which is the right answer rather than a crash.
+		if (sz & kBakedFlag)
+		{
+			int bm = static_cast<int>(h->offset[mode][variant]);
+			int bv = static_cast<int>(sz & ~kBakedFlag);
+			if (kHaveSamples && bm >= 0 && bm < kNumModes &&
+			    bv >= 0 && bv < kNumVariants)
+				return { kModeSample[bm] + kModeSampleOff[bm][bv],
+				         kModeSampleSize[bm][bv] };
+			return { nullptr, 0 };
+		}
+
 		if (sz > 0 && h->offset[mode][variant] + sz <= kUserDataLen)
 			return { UserData() + h->offset[mode][variant], sz };
 	}

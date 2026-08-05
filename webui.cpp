@@ -528,6 +528,35 @@ void __not_in_flash_func(WebUI::HandleSysex)(const uint8_t *msg, uint32_t len)
 		break;
 	}
 
+	case MSG_UP_BAKED:
+	{
+		// Point a slot at a BUILT-IN recording: payload mode, variant, srcMode,
+		// srcVariant. Costs no flash and needs no audio sent, so the stock horse
+		// hoof can be Geese 1 without re-uploading it.
+		if (!uploading_ || n < 5) { SendErr(ERR_PROTOCOL); break; }
+		uint8_t dm = p[1], dv = p[2], sm = p[3], sv = p[4];
+		if (dm >= kNumModes || dv >= kNumVariants ||
+		    sm >= kNumModes || sv >= kNumVariants) { SendErr(ERR_BAD_SLOT); break; }
+
+		if (!modeCleared_[dm])
+		{
+			modeCleared_[dm] = true;
+			for (int v = 0; v < kNumVariants; v++)
+			{
+				hdr_.offset[dm][v] = 0;
+				hdr_.size[dm][v]   = 0;
+				touched_[dm][v]    = false;
+			}
+		}
+		hdr_.offset[dm][dv] = sm;                    // the baked MODE
+		hdr_.size[dm][dv]   = kBakedFlag | sv;       // flag + the baked VARIANT
+		// NOT touched_: the commit pass rebases staging offsets into flash
+		// offsets, and this offset is a mode index, not an offset at all.
+		touched_[dm][dv]    = false;
+		SendAck(10, 0);
+		break;
+	}
+
 	case MSG_UP_CHUNK:
 	{
 		if (!uploading_) { SendErr(ERR_PROTOCOL); break; }

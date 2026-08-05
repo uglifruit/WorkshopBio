@@ -190,7 +190,8 @@ const MFR = 0x7D;
 const MSG = {
   HELLO:0x01, INFO:0x02, UP_BEGIN:0x10, UP_SLOT:0x11, UP_CHUNK:0x12,
   UP_SLOTEND:0x13, UP_END:0x14, ACK:0x15, ERR:0x16, ERASE:0x20,
-  UP_ALIAS:0x17, UP_DROP:0x18, PLAY:0x21, CLEARMODE:0x22, SLOTS:0x23,
+  UP_ALIAS:0x17, UP_DROP:0x18, UP_BAKED:0x19,
+  PLAY:0x21, CLEARMODE:0x22, SLOTS:0x23,
   SLOTINFO:0x24, SLOTDET:0x25,
   PROF_GET:0x30, PROF:0x31,
 };
@@ -469,7 +470,11 @@ async function upload() {
   // Which pool entries are actually referenced by a slot? Only those get sent -
   // and each only ONCE, however many slots use it. Every slot after the first
   // becomes an alias pointing at the same bytes on the card.
-  const usedIdx = [...new Set(Object.values(state.slots))].sort((a, b) => a - b);
+  // Only POOL entries carry audio; baked references are free.
+  const poolIdx = (v) => (typeof v === "string" && v[0] === "p")
+                         ? parseInt(v.slice(1), 10) : -1;
+  const usedIdx = [...new Set(Object.values(state.slots)
+                    .map(poolIdx).filter(i => i >= 0))].sort((a, b) => a - b);
 
   // One loudness target across everything, so switching modes on the card does
   // not jump in level.
@@ -486,9 +491,18 @@ async function upload() {
 
   // First slot using a given file CARRIES it; the rest alias that slot.
   const carrier = new Map();
-  const prepared = [], aliases = [];
-  for (const [key, idx] of entries) {
+  const prepared = [], aliases = [], bakedRefs = [];
+  for (const [key, val] of entries) {
     const [mode, variant] = key.split(":").map(Number);
+    if (typeof val === "string" && val[0] === "b") {
+      // A built-in recording: the card already has the audio, so this is a
+      // reference rather than a transfer.
+      const [bm, bv] = val.slice(1).split(":").map(Number);
+      bakedRefs.push({ mode, variant, srcMode: bm, srcVariant: bv });
+      continue;
+    }
+    const idx = poolIdx(val);
+    if (idx < 0) continue;
     if (carrier.has(idx)) {
       const src = carrier.get(idx);
       aliases.push({ mode, variant, srcMode: src.mode, srcVariant: src.variant });
@@ -504,7 +518,7 @@ async function upload() {
   // A mode the card holds but the page has emptied entirely sends no UP_SLOT,
   // so nothing would clear it. Name those explicitly and revert them, or
   // "set every slot to none and sync" would silently do nothing.
-  const touched = new Set([...prepared, ...aliases].map(x => x.mode));
+  const touched = new Set([...prepared, ...aliases, ...bakedRefs].map(x => x.mode));
   const onCardModes = new Set(
     Object.keys(state.onCardSlots).map(k => Number(k.split(":")[0])));
   const emptied = [...onCardModes].filter(m => !touched.has(m));
@@ -575,6 +589,12 @@ async function upload() {
     // sync half way through.
     for (const m of emptied) {
       send([MSG.UP_DROP, m]);
+      await waitAck();
+    }
+
+    // Slots pointing at a BUILT-IN recording: no audio to send.
+    for (const b of bakedRefs) {
+      send([MSG.UP_BAKED, b.mode, b.variant, b.srcMode, b.srcVariant]);
       await waitAck();
     }
 
@@ -753,9 +773,12 @@ async function addToPool(file) {
 function removeFromPool(idx) {
   state.pool.splice(idx, 1);
   const next = {};
-  for (const [k, i] of Object.entries(state.slots)) {
+  for (const [k, v] of Object.entries(state.slots)) {
+    // Baked references are unaffected by pool renumbering.
+    if (typeof v !== "string" || v[0] !== "p") { next[k] = v; continue; }
+    const i = parseInt(v.slice(1), 10);
     if (i === idx) continue;                 // slots using it become empty
-    next[k] = i > idx ? i - 1 : i;
+    next[k] = `p${i > idx ? i - 1 : i}`;
   }
   state.slots = next;
   renderPool();
@@ -813,7 +836,7 @@ function renderPool() {
   }
   box.innerHTML = "";
   state.pool.forEach((p, i) => {
-    const used = Object.values(state.slots).filter(x => x === i).length;
+    const used = Object.values(state.slots).filter(x => x === `p${i}`).length;
     const row = document.createElement("div");
     row.style.cssText = "display:flex;gap:.6rem;align-items:baseline";
     row.innerHTML =
@@ -841,10 +864,21 @@ function refreshSelects() {
       const sel = document.getElementById(`sel${mi}_${v}`);
       if (!sel) continue;
       const cur = state.slots[`${mi}:${v}`];
+      // Three kinds of entry: nothing, one of YOUR files, or one of the card's
+      // own recordings — which can come from ANY mode, so the built-in horse
+      // hoof can be Geese 1 without uploading anything.
+      const baked = MODES.map(([bn, , bc], bm) =>
+        `<optgroup label="Built-in ${bn}">` +
+        Array.from({ length: bc }, (_, bv) =>
+          `<option value="b${bm}:${bv}">${bn} ${bv + 1}</option>`).join("") +
+        `</optgroup>`).join("");
       sel.innerHTML = `<option value="">— none —</option>` +
-        state.pool.map((p, i) =>
-          `<option value="${i}">${i + 1}. ${p.name}</option>`).join("");
-      sel.value = (cur === undefined) ? "" : String(cur);
+        (state.pool.length
+          ? `<optgroup label="Your samples">` + state.pool.map((p, i) =>
+              `<option value="p${i}">${i + 1}. ${p.name}</option>`).join("") +
+            `</optgroup>`
+          : "") + baked;
+      sel.value = (cur === undefined) ? "" : cur;
       const slot = sel.parentElement;
       if (slot) slot.classList.toggle("filled", cur !== undefined);
     }
@@ -872,7 +906,7 @@ function build() {
       sel.onchange = () => {
         const k = `${mi}:${v}`;
         if (sel.value === "") delete state.slots[k];
-        else state.slots[k] = parseInt(sel.value, 10);
+        else state.slots[k] = sel.value;     // "p<i>" or "b<mode>:<variant>"
         updateUsage();
       };
       s.appendChild(sel);
@@ -886,7 +920,7 @@ function build() {
         const f = e.dataTransfer.files[0];
         if (!f) return;
         const idx = await addToPool(f);
-        if (idx >= 0) { state.slots[`${mi}:${v}`] = idx; refreshSelects(); updateUsage(); }
+        if (idx >= 0) { state.slots[`${mi}:${v}`] = `p${idx}`; refreshSelects(); updateUsage(); }
       };
       slots.appendChild(s);
     }
@@ -933,7 +967,9 @@ function updateCapacity() {
   // magnitude and 8-bit mono means one byte per sample.
   // Distinct pool entries actually assigned. Reuse is free on the card, so a
   // file used four times still counts once here.
-  const usedIdx = [...new Set(Object.values(state.slots))];
+  const usedIdx = [...new Set(Object.values(state.slots)
+    .filter(v => typeof v === "string" && v[0] === "p")
+    .map(v => parseInt(v.slice(1), 10)))];
   const staged = usedIdx.reduce(
     (n, i) => n + (state.pool[i] ? state.pool[i].audio.length : 0), 0);
 
